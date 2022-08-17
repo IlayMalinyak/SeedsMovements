@@ -216,7 +216,7 @@ def register_sitk(fixed_path, moving_path, meta, out_path, type="Bspline", param
         raise ValueError("transformation of type: %s does not exist" % type)
     warped = warp_image_sitk(fixed, moving, outTx)
 
-    outTx_inv, disp_img = get_inverse_transform(outTx, fixed.GetSpacing(), type)
+    outTx_inv, disp_img = get_inverse_transform(outTx, type)
     # warped_inv = warp_image_sitk(fixed, moving, outTx_inv)
 
     return fixed, warped, outTx, outTx_inv, disp_img
@@ -244,16 +244,17 @@ def warp_image_sitk(fixed, moving, outTx, mask=False, default_val=-1024):
     return warped_img
 
 
-def get_inverse_transform(outx, spacing, type):
+def get_inverse_transform(outx, type):
     if type == "Bspline":
-        return inverse_bspline(outx, spacing)
+        return inverse_bspline(outx)
     return outx.GetInverse(), None
 
 
-def inverse_bspline(outX, grid_spacing):
+def inverse_bspline(outX):
     print("inverting")
     df_inverter = sitk.InvertDisplacementFieldImageFilter()
     df_inverter.SetMaximumNumberOfIterations(100)
+    grid_spacing = [20,20,20]
     # df_inverter.SetEnforceBoundaryCondition(True)
     outX = sitk.BSplineTransform(sitk.CompositeTransform(outX).GetNthTransform(0))
     # physical_size = outX.GetTransformDomainPhysicalDimensions()
