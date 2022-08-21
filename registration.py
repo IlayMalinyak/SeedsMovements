@@ -183,14 +183,16 @@ def read_image(dir):
     return image
 
 
-def register_sitk(fixed_path, moving_path, meta, out_path, type="Bspline", params={}):
+def register_sitk(fixed_path, moving_path, meta, out_path, type="Bspline", params={}, domain_start=None, domain_end=None):
     """
     register two dicoms
     :param fixed_path: path to fixed dicom
     :param moving_path: path to moving dicom
     :param out_path: path to save transformation file
     :param type: type of registration (default is bspline)
-    :param params:
+    :param params: parameters for transformation. dictionary
+    :param domain_end: coordinates of end of registration domain. array
+    :param domain_start: coordinates of start of registration domain. array
     :return: parameter dict
     """
     # fixed = sitk.Cast(sitk.GetImageFromArray(fixed_path), sitk.sitkFloat32)
@@ -209,7 +211,7 @@ def register_sitk(fixed_path, moving_path, meta, out_path, type="Bspline", param
     print("----%s----" % type)
     print("origin before registration ", fixed.GetOrigin(), moving.GetOrigin())
     if type == "Bspline":
-        outTx = bspline_registration(fixed, moving, meta, out_path, params)
+        outTx = bspline_registration(fixed, moving, out_path, params, domain_start, domain_end)
     elif type == "Affine":
         outTx = affine_registration(fixed, moving, out_path, params)
     else:
@@ -254,7 +256,7 @@ def inverse_bspline(outX):
     print("inverting")
     df_inverter = sitk.InvertDisplacementFieldImageFilter()
     df_inverter.SetMaximumNumberOfIterations(100)
-    grid_spacing = [20,20,20]
+    grid_spacing = [5,5,5]
     # df_inverter.SetEnforceBoundaryCondition(True)
     outX = sitk.BSplineTransform(sitk.CompositeTransform(outX).GetNthTransform(0))
     # physical_size = outX.GetTransformDomainPhysicalDimensions()
@@ -276,7 +278,7 @@ def inverse_bspline(outX):
 
 
 
-def bspline_registration(fixed_image, moving_image, meta, out_path, params):
+def bspline_registration(fixed_image, moving_image, out_path, params, domain_start, domain_end):
     """
     bspline deformable registration
     :param fixed_image: sitk.Image fixe image
@@ -286,20 +288,20 @@ def bspline_registration(fixed_image, moving_image, meta, out_path, params):
     :return: transformation
     """
 
-    spacing = meta['pixelSpacing']
-    try:
-        spacing.append(meta['sliceSpacing'])
-    except Exception as e:
-        print("in bspline ", e)
-        spacing.append(meta['sliceThickness'])
-    origin = meta['IPP']
-    depth = fixed_image.GetDepth()
-    print("fixed depth ", depth)
     registration_method = sitk.ImageRegistrationMethod()
+
+    origin = fixed_image.GetOrigin()
+    if domain_start is not None:
+        start_pixel = (np.array(domain_start - np.array(origin)) / np.array(fixed_image.GetSpacing())).astype(np.int16)
+        end_pixel = (np.array(domain_end - np.array(origin)) / np.array(fixed_image.GetSpacing())).astype(np.int16)
+        reduced = fixed_image[start_pixel[0]:end_pixel[0], start_pixel[1]:end_pixel[1], start_pixel[2]:end_pixel[2]]
+        print("reduced size = ", reduced.GetSize())
+    else:
+        reduced = fixed_image
 
     # Determine the number of BSpline control points using the physical
     # spacing we want for the finest resolution control grid.
-    grid_physical_spacing = [50.0, 50.0, 50.0] # A control point every 5mm
+    grid_physical_spacing = [40, 40, 40]
     image_physical_size = [size*spacing for size,spacing in zip(fixed_image.GetSize(), fixed_image.GetSpacing())]
     mesh_size = [int(image_size/grid_spacing + 0.5) \
                  for image_size,grid_spacing in zip(image_physical_size,grid_physical_spacing)]
@@ -307,7 +309,7 @@ def bspline_registration(fixed_image, moving_image, meta, out_path, params):
     # the multi-resolution framework.
     mesh_size = [int(sz/4 + 0.5) for sz in mesh_size]
 
-    initial_transform = sitk.BSplineTransformInitializer(image1=fixed_image,
+    initial_transform = sitk.BSplineTransformInitializer(image1=reduced,
                                                          transformDomainMeshSize=mesh_size, order=3)
     # initial_transform.SetTransformDomainOrigin([-273, -208, 660])
     print("transform origin ", initial_transform.GetTransformDomainOrigin())

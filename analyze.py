@@ -10,7 +10,7 @@ import registration
 from SimpleITK import AffineTransform
 
 
-BASE_ERROR = 1.5
+BASE_ERROR = 1.3
 
 
 def analyze(fixed_dir, moving_dir, df, case, registration_method='bspline', assignment=None):
@@ -139,13 +139,15 @@ def calc_rmse(pt1, pt2, pct):
     print("rmse ", rmse, "dist ", dist, "err ", err)
     return err if err is not None else 0
 
-def calculate_distances(case, seeds1, seeds2, meta1, meta2, assign_list=None, save=True):
+
+def calculate_distances(case, seeds1, seeds2, reg_error, assign_list=None, save=True):
     """
     calculate distance using Munkres algorithm.
     :param case: study id
     :param seeds1: (3,3,N) array of first seeds. the first axis represent 3 tips (start, middle,end). the second axis represent
             3 coordinates (x,y,z)
     :param seeds2: (3,3,N) array of second seeds.
+    :param reg_error: registration error
     :param assign_list: list of indices to match seeds2 to seeds1 elements. if None, auto assignment is done
      using Munkres algorithm
     :return: seeds1, seeds2, dist ((N,) array), errors ((N,) array)
@@ -159,7 +161,7 @@ def calculate_distances(case, seeds1, seeds2, meta1, meta2, assign_list=None, sa
     seeds2_assigned = seeds2[..., seed2_idx]
     assignment_dists = np.array([calc_dist(seeds1_assigned[..., i], seeds2_assigned[..., i], calc_max=True)
                                  for i in range(seeds2_assigned.shape[-1])])
-    return analyze_distances(case,assignment_dists, seeds1_assigned, seeds2_assigned, save=save)
+    return analyze_distances(case,assignment_dists, seeds1_assigned, seeds2_assigned, reg_error, save=save)
 
 
 def calc_dist(x, y, calc_max=False):
@@ -196,7 +198,7 @@ def assignment(seeds1, seeds2):
     return row_ind, col_ind
 
 
-def analyze_distances(case, dists, seeds1, seeds2, save=True):
+def analyze_distances(case, dists, seeds1, seeds2, error, save=True):
     """
     calculate errors and plot results
     :param case: case name
@@ -206,11 +208,12 @@ def analyze_distances(case, dists, seeds1, seeds2, save=True):
     :param seeds2: (3,3,N) array of second seeds.
     :return: seeds1, seeds2, dist ((N,) array), errors ((N,) array)
     """
-    error = np.mean(np.abs(seeds2 - seeds1) / dists * BASE_ERROR, axis=0)
+    error = error if error is not None else np.zeros(len(dists))
+    error += BASE_ERROR
     plot_pairs(seeds1, seeds2, case, save)
     plot_individual_moves(case, dists, error, save)
     # display_dists(seeds1, seeds2, "%s movements and matching" % case, "%s_matchs.jpg" % case)
-    return seeds1, seeds2, dists, error
+    return
 
 
 def calc_cm_shift(seeds1, seeds2):

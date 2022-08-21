@@ -77,10 +77,21 @@ class App():
             [sg.VPush()],
             [sg.VPush()],
             [sg.Text('Upload files', font=font_header)],
-            [sg.Text('DICOM dir 1', font=font_text), sg.In(size=(15, 1), enable_events=True, key='-FIXED_FOLDER-'),
-             sg.FolderBrowse(font=font_text)],
-            [sg.Text('DICOM dir 2', font=font_text), sg.In(size=(15, 1), enable_events=True, key='-MOVING_FOLDER-'),
-             sg.FolderBrowse(font=font_text)],
+            [sg.Text('DICOM dir 1', font=font_text), sg.In(size=(10, 1), enable_events=True, key='-FIXED_FOLDER-'),
+             sg.FolderBrowse(font=font_text), sg.Text('seeds dir 1', font=font_text, key='-SEEDS_TEXT_1-',visible=False),
+             sg.In(size=(10, 1), enable_events=True, key='-SEEDS_INPUT_1-', visible=False),
+             sg.FolderBrowse(font=font_text, key='-SEEDS_BROWSER_1-', visible=False),
+             sg.Button("Draw Domain", font=font_text, key="-DOMAIN-", visible=False),
+             sg.Text('z start', font=font_text, visible=False,key="-DOMAIN_START_TEXT-"),
+             sg.In(size=(6, 1), enable_events=True, key='-DOMAIN_START-', visible=False),
+             sg.Text('z end', font=font_text, visible=False, key="-DOMAIN_END_TEXT-"),
+             sg.In(size=(6, 1), enable_events=True, key='-DOMAIN_END-' , visible=False)],
+            [sg.Text('DICOM dir 2', font=font_text), sg.In(size=(10, 1), enable_events=True, key='-MOVING_FOLDER-'),
+             sg.FolderBrowse(font=font_text),
+             sg.Text('seeds dir 2', font=font_text, key='-SEEDS_TEXT_2-', visible=False),
+             sg.In(size=(10, 1), enable_events=True, key='-SEEDS_INPUT_2-', visible=False),
+             sg.FolderBrowse(font=font_text, key='-SEEDS_BROWSER_2-', visible=False)
+             ],
             [sg.HSeparator()],
             [sg.VPush()],
             [sg.VPush()],
@@ -96,24 +107,24 @@ class App():
               sg.Text('Metric 2', key='-METRIC_TEXT_2-', visible=False),
               sg.Combo(['Mean Squares', 'Mutual information'], key='-METRIC_MENU_2-', visible=False, enable_events=True),],
              [sg.Text('Sampling percentage (0-1)', key='-GLOBAL_PARAM_TEXT_1-', visible=False),
-             sg.InputText(size=(4, 1), visible=False, key='-GLOBAL_PARAM_1-', enable_events=True),
+             sg.InputText(size=(6, 1), visible=False, key='-GLOBAL_PARAM_1-', enable_events=True),
              sg.Text('Number of Iterations', key='-GLOBAL_PARAM_TEXT_2-', visible=False),
-             sg.InputText(size=(4, 1), visible=False, key='-GLOBAL_PARAM_2-', enable_events=True)
+             sg.InputText(size=(6, 1), visible=False, key='-GLOBAL_PARAM_2-', enable_events=True),
              ],
             [
 
              sg.Text('Sampling 2', key='-SAMPLE_TEXT_2-', visible=False),
-              sg.InputText(size=(4, 1), visible=False, key='-SAMPLE_2-', enable_events=True),
+              sg.InputText(size=(6, 1), visible=False, key='-SAMPLE_2-', enable_events=True),
              sg.Text('Number of Iterations 2', key='-NUM_ITER_2_TEXT-', visible=False),
-             sg.InputText(size=(4, 1), visible=False, key='-NUM_ITER_2-', enable_events=True)
+             sg.InputText(size=(6, 1), visible=False, key='-NUM_ITER_2-', enable_events=True)
              ],
             [
              sg.Text('Convergence Tolerance', key='-GLOBAL_PARAM_TEXT_3-', visible=False),
-             sg.InputText(size=(5, 1), visible=False, key='-GLOBAL_PARAM_3-', enable_events=True)
+             sg.InputText(size=(6, 1), visible=False, key='-GLOBAL_PARAM_3-', enable_events=True)
              ,sg.Text('Solution accuracy', key='-LBFGS2_PARAM_TEXT_1-', visible=False),
-             sg.InputText(size=(5, 1), visible=False, key='-LBFGS2_PARAM_1-', enable_events=True),
+             sg.InputText(size=(6, 1), visible=False, key='-LBFGS2_PARAM_1-', enable_events=True),
              sg.Text('Learning Rate', key='-GD_PARAM_TEXT_1-', visible=False),
-             sg.InputText(size=(5, 1), visible=False, key='-GD_PARAM_1-', enable_events=True),
+             sg.InputText(size=(6, 1), visible=False, key='-GD_PARAM_1-', enable_events=True),
              ],
             [sg.Text("Contours Source", key='-GET_CONTOURS_TEXT-', visible=False),
              sg.Combo(['dcm file', 'csv file', 'Auto Segmentation'], key='-CONTOURS_MENU-', visible=False, enable_events=True),
@@ -165,7 +176,8 @@ class App():
             [sg.Text("Calculate movements", font=font_header)],
             [sg.Button("Calculate", font=font_text, key='-CALC_MOVE-')],
             [sg.Button("Show movements", font=font_text, key='-SHOW_MOVE-', visible=False), sg.Button("Show Pairs",
-                                                                        font=font_text, key='-SHOW_PAIRS-', visible=False)
+            font=font_text, key='-SHOW_PAIRS-', visible=False), sg.Button("Show Pairs interactive",
+            font=font_text, key='-SHOW_PAIRS_INTERACTIVE-', visible=False)
              ,sg.Button("Save results to csv", font=font_text, key='-SAVE-', visible=False)],
             [sg.HSeparator()],
             [sg.VPush()],
@@ -206,7 +218,7 @@ class App():
         self.meta = None
         self.fixed_array = None
         self.moving_array = None
-        # self.warped_array = None
+        self.domain = None
         self.fixed_sitk = None
         self.moving_sitk = None
         # self.warped_sitk = None
@@ -233,7 +245,7 @@ class App():
         self.euler_angles = np.zeros(3)
         self.shift = np.zeros(3)
         self.optimizer = None
-        self.rmse = []
+        self.rmse = [None]
         self.correspondence = None
         self.local_params = {}
         # self.warped_moving = None
@@ -278,20 +290,46 @@ class App():
                 self.upload_fixed(values)
             if event == '-MOVING_FOLDER-':
                 self.upload_moving(values)
+            if event == "-SEEDS_INPUT_1-":
+                seeds, orientation = read_structure(values[event], seeds=True)
+                self.seeds_tips_fixed = self.seeds_tips_fixed_orig = get_seeds_tips(seeds, orientation)
+                self.message = f"{self.seeds_tips_fixed.shape[-1]} seeds was loaded from contours"
+                self.update_massage(self.message)
+            if event == "-SEEDS_INPUT_2-":
+                seeds, orientation = read_structure(values[event], seeds=True)
+                self.seeds_tips_moving = self.seeds_tips_moving_orig = get_seeds_tips(seeds, orientation)
+                self.message = f"{self.seeds_tips_moving.shape[-1]} seeds was loaded from contours"
+                self.update_massage(self.message)
+            if event == "-DOMAIN-":
+                if self.fixed_viewer is not None:
+                    self.fixed_viewer.annotate()
+                    self.update_massage("draw the desired domain on the image")
+                    y0,x0,y1,x1 = self.fixed_viewer.get_rect()
+                    print(y0,x0,y1,x1)
+                    self.domain = np.array([int(y0),int(x0),0]), np.array([int(y1),int(x1),self.fixed_array.shape[-1]])
+            if event == "-DOMAIN_START-":
+                if self.domain is not None:
+                    self.domain[0][-1] = int(values[event])
+            if event == "-DOMAIN_END-":
+                if self.domain is not None:
+                    self.domain[1][-1] = int(values[event])
             if event == "-REG_MENU-":
                 self.clear_all_params()
                 self.registration_type = values[event]
                 print("reg type ", self.registration_type)
                 if self.registration_type == "ICP":
                     self.show_contour_params()
+                    self.hide_domain_params()
                 elif self.registration_type == "Bspline" or self.registration_type == 'Affine' or self.registration_type\
                 == "Affine+Bspline":
                     self.show_relevant_params_input()
                     self.init_param_dict()
+                    self.show_domain_params()
                 elif self.registration_type == "Use saved Registration":
                     print("should show uploader")
                     self.window['-TFM_INPUT-'].update(visible=True)
                     self.window['-TFM_UPLOADER-'].update(visible=True)
+                    self.hide_domain_params()
             if event == "-TFM_INPUT-":
                 tfm_path = values[event]
                 self.registration_type = "saved_" + tfm_path.removesuffix('.tfm').split('_')[-1]
@@ -391,9 +429,9 @@ class App():
                 # self.warped_moving = self.moving_array if self.warped_moving is None else self.warped_moving
                 if self.overlay_viewer is not None:
                     self.overlay_viewer.clear()
-                    self.masked_moving_struct = self.masked_fixed_struct = None
+                # self.masked_moving_struct = self.masked_fixed_struct = None
                 self.overlay_viewer = OverlayViewer(self.fixed_array, self.moving_array, self.window['-OVERLAY_CANVAS-'].TKCanvas,
-                                                    'overlay', self.masked_fixed_struct, self.masked_moving_struct)
+                                                    'overlay')
                 self.overlay_viewer.show()
                 # else:
                 #     moving_ctrs_points_transformed = apply_transformation(self.moving_ctrs_points, self.tfm)
@@ -436,8 +474,9 @@ class App():
                         self.assignment_dists = np.array(
                             [calc_dist(seeds1_assigned[..., i], seeds2_assigned[..., i], calc_max=True)
                              for i in range(seeds2_assigned.shape[-1])])
-                        seeds1, seeds2, _, self.errors = analyze_distances(self.case_name, self.assignment_dists,
-                                                                               seeds1_assigned, seeds2_assigned)
+                        error =  np.ones(len(self.assignment_dists))*self.rmse[-1] if self.rmse[-1] is not None else None
+                        analyze_distances(self.case_name, self.assignment_dists, seeds1_assigned, seeds2_assigned,
+                                          error)
                         self.message = 'Number of assignments - {}\n sum of distances - '\
                                             '{:.2f}\n average distance - {:.2f}'\
                                             .format(len(self.assignment_dists), sum(self.assignment_dists),\
@@ -452,6 +491,8 @@ class App():
             if event == "-SHOW_PAIRS-":
                 self.plot_name = "pairs"
                 self.window['-IMAGE-'].update("./movement_output/{}/pairs.png".format(self.case_name))
+            if event == "-SHOW_PAIRS_INTERACTIVE-":
+                plot_seeds_and_contour_interactive(self.seeds_tips_fixed, self.seeds_tips_moving, self.moving_ctrs_points)
             if event == "-SAVE-":
                 rmse = [self.param_stack[i]['RMSE'] if 'RMSE' in self.param_stack[i].keys()
                         else None for i in range(len(self.param_stack))]
@@ -615,39 +656,6 @@ class App():
                                                                    "affine")
 
     def run_composite_sitk_registration(self, types):
-
-        # fixed_path = get_all_dicom_files(r"C:\Users\ilaym\Desktop\Dart\seedsMovement\cases\brain\0", {})
-        # moving_path = get_all_dicom_files(r"C:\Users\ilaym\Desktop\Dart\seedsMovement\cases\brain\20", {})
-        # seeds1_center, orie1 = get_seeds_dcm(fixed_path['RTPLAN'])
-        # seeds1 = get_seeds_tips(seeds1_center, orie1)
-        # meta1 = fixed_path['meta']
-        # meta2 = moving_path['meta']
-        # seeds2_center, orie2 = get_seeds_dcm(moving_path['RTPLAN'])
-        # seeds2 = get_seeds_tips(seeds2_center, orie2)
-        #
-        # fixed_points = read_structure(fixed_path['RTSTRUCT'])[0][1]
-        # moving_points = read_structure(moving_path['RTSTRUCT'])[0][1]
-        # fixed_0, warped_0, outx_0,outTx_inv, disp_img  = register_sitk(fixed_path['CT'], moving_path['CT'],
-        #                                                                self.fixed_dict['meta'],'./', "Affine",
-        #                                                                self.registration_params)
-        # compTfm = sitk.CompositeTransform(outx_0)
-        #
-        # self.registration_params["optimizer"] = self.registration_params["optimizer 2"]
-        # self.registration_params["metric"] = self.registration_params["metric 2"]
-        # self.registration_params["iterations"] = self.registration_params["iterations 2"]
-        # self.registration_params['sampling_percentage'] = self.registration_params['sampling_percentage 2']
-        # fixed_0, warped_0, outx_0, outTx_inv, disp_img = register_sitk(fixed_0, warped_0, self.fixed_dict['meta'], './',
-        #                                                                "Bspline",
-        #                                                                self.registration_params)
-        #
-        # warped_contours = apply_sitk_transformation_on_struct(compTfm, fixed_points.T)
-        # rmse2 = calc_rmse(warped_contours.T, moving_points.T, 0.001)
-        # warped_seeds = apply_transformation_on_seeds(compTfm, seeds1)
-        # compTfm.AddTransform(outx_0)
-        #
-        # dist = calculate_distances("", warped_seeds, seeds2, meta1, meta2, None, False)
-        # print(dist)
-        # print("rmse2 ", rmse2)
         print("running composite registration")
         print(self.registration_params)
         self.composite_tfm = sitk.CompositeTransform(3)
@@ -663,9 +671,9 @@ class App():
                     self.composite_tfm.AddTransform(sitk.CompositeTransform(self.inv_tfm).GetNthTransform(0))
                 except Exception as e:
                     print(e)
-                    self.composite_tfm.AddTransform(self.inv_tfm)
+                    self.composite_tfm.AddTransform(self.tfm)
             else:
-                self.composite_tfm.AddTransform(self.inv_tfm)
+                self.composite_tfm.AddTransform(self.tfm)
             self.registration_params["optimizer"] = self.registration_params["optimizer 2"]
             self.registration_params["metric"] = self.registration_params["metric 2"]
             self.registration_params["iterations"] = self.registration_params["iterations 2"]
@@ -675,39 +683,45 @@ class App():
         self.registration_params["optimizer"] = tmp_opt
         self.registration_params["metric"] = tmp_metric
         self.registration_params['sampling_percentage'] = tmp_smp
-        self.seeds_tips_moving = apply_transformation_on_seeds(self.composite_tfm,
-                                                              self.seeds_tips_moving,
+        self.seeds_tips_fixed = apply_transformation_on_seeds(self.composite_tfm,
+                                                              self.seeds_tips_fixed,
                                                               "sitk")
-        self.moving_ctrs_points = apply_sitk_transformation_on_struct(self.composite_tfm, self.moving_ctrs_points)
+        self.fixed_ctrs_points = apply_sitk_transformation_on_struct(self.composite_tfm, self.fixed_ctrs_points)
         self.rmse.append(calc_rmse(self.fixed_ctrs_points.T, self.moving_ctrs_points.T, 0.001))
         self.param_stack.append({"RMSE": self.rmse[-1]})
 
     def run_sitk_registration(self, type, apply=True):
         print(self.registration_type)
         print(self.registration_params['optimizer'], self.registration_params['metric'], self.registration_params['iterations'])
-        try:
-            if len(self.reg_stack) == 0 or all(np.array(self.reg_stack) == 'ICP'):
-                self.fixed_sitk, self.moving_sitk, self.tfm, self.inv_tfm, self.disp_img = register_sitk(
-                    self.fixed_dict['CT'], self.moving_dict['CT'], self.fixed_dict['meta'], self.registration_plot_path,
-                    type, self.registration_params)
-            else:
-                self.fixed_sitk, self.moving_sitk, self.tfm, self.inv_tfm, self.disp_img = register_sitk(
-                    self.fixed_sitk, self.moving_sitk, self.moving_dict['meta'], self.registration_plot_path,
-                    type, self.registration_params)
-            if apply:
-                self.seeds_tips_moving = apply_transformation_on_seeds(self.inv_tfm,
-                                                                           self.seeds_tips_moving,
-                                                                           "sitk")
-                self.moving_ctrs_points = apply_sitk_transformation_on_struct(self.inv_tfm, self.moving_ctrs_points)
-                self.rmse.append(calc_rmse(self.fixed_ctrs_points.T, self.moving_ctrs_points.T, 0.001))
-                self.param_stack.append({"RMSE": self.rmse})
-            self.update_arrays("sitk")
-            print("after registration fixed: ", self.fixed_sitk.GetOrigin(), " moving: ", self.moving_sitk.GetOrigin())
-            self.param_stack.append(self.registration_params)
+        if self.domain is None:
+            self.domain = get_contour_domain(self.fixed_ctrs_points.T, self.moving_ctrs_points.T)
+        else:
+            y0,x0,y1,x1 = self.fixed_viewer.get_rect()
+            self.domain[0][:2] = [int(y0),int(x0)]
+            self.domain[1][:2] = [int(y1),int(x1)]
+        print("domain is ", self.domain)
+        num_slices = self.fixed_array.shape[-1]
+        # domain = get_manual_domain(np.array([300,150,num_slices - 200]), np.array([450,320,num_slices - 270]), self.fixed_dict['meta'])
+        if len(self.reg_stack) == 0 or all(np.array(self.reg_stack) == 'ICP'):
+            self.fixed_sitk, self.moving_sitk, self.tfm, self.inv_tfm, self.disp_img = register_sitk(
+                self.fixed_dict['CT'], self.moving_dict['CT'], self.fixed_dict['meta'], self.registration_plot_path,
+                type, self.registration_params, self.domain[0], self.domain[1])
+        else:
+            self.fixed_sitk, self.moving_sitk, self.tfm, self.inv_tfm, self.disp_img = register_sitk(
+                self.fixed_sitk, self.moving_sitk, self.moving_dict['meta'], self.registration_plot_path,
+                type, self.registration_params, self.domain[0], self.domain[1])
+        if apply:
+            self.seeds_tips_fixed = apply_transformation_on_seeds(self.tfm,
+                                                                       self.seeds_tips_fixed,
+                                                                       "sitk")
+            self.fixed_ctrs_points = apply_sitk_transformation_on_struct(self.tfm, self.fixed_ctrs_points)
+            self.rmse.append(calc_rmse(self.fixed_ctrs_points.T, self.moving_ctrs_points.T, 0.001))
+            self.param_stack.append({"RMSE": self.rmse})
+        self.update_arrays("sitk")
+        print("after registration fixed: ", self.fixed_sitk.GetOrigin(), " moving: ", self.moving_sitk.GetOrigin())
+        self.param_stack.append(self.registration_params)
 
-        except Exception as e:
-            print("sitk expection ", e)
-            self.update_massage("Registration Failed")
+
 
         # if self.moving_struct_sitk is not None:
         #     self.moving_struct_sitk = warp_image_sitk(self.fixed_sitk, self.moving_struct_sitk, self.tfm, mask=True,
@@ -718,18 +732,18 @@ class App():
         #TODO update arrays (numpy and sitk)
         print('shift ', self.shift)
         R = Rotation.from_euler("xyz", self.euler_angles, degrees=True)
-        mean = np.mean(self.moving_ctrs_points, axis=0)
+        mean = np.mean(self.fixed_ctrs_points, axis=0)
         # print("R ", R.as_matrix())
-        self.moving_ctrs_points -= mean
-        self.moving_ctrs_points = R.apply(self.moving_ctrs_points)
-        self.moving_ctrs_points += mean
-        self.moving_ctrs_points += self.shift[None, :]
+        self.fixed_ctrs_points -= mean
+        self.fixed_ctrs_points = R.apply(self.fixed_ctrs_points)
+        self.fixed_ctrs_points += mean
+        self.fixed_ctrs_points += self.shift[None, :]
 
         mean = mean[None, :, None]
-        self.seeds_tips_moving -= mean
-        self.seeds_tips_moving = apply_scipy_transformation_on_seeds(R, self.seeds_tips_moving)
-        self.seeds_tips_moving += mean
-        self.seeds_tips_moving += self.shift[None, :, None]
+        self.seeds_tips_fixed -= mean
+        self.seeds_tips_fixed = apply_scipy_transformation_on_seeds(R, self.seeds_tips_fixed)
+        self.seeds_tips_fixed += mean
+        self.seeds_tips_fixed += self.shift[None, :, None]
         self.param_stack.append({"rotation":self.euler_angles, "shift":self.shift})
         self.rmse.append(calc_rmse(self.fixed_ctrs_points.T, self.moving_ctrs_points.T, 0.001))
         overlay_contours(self.fixed_ctrs_points, self.moving_ctrs_points, self.registration_plot_path)
@@ -776,9 +790,8 @@ class App():
             self.update_massage(self.message)
             self.tfm = best_reg.transformation.numpy()
             self.inv_tfm = np.linalg.inv(self.tfm)
-            self.moving_ctrs_points = apply_transformation(self.moving_ctrs_points, self.inv_tfm)
-            self.seeds_tips_moving = apply_transformation_on_seeds(np.linalg.inv(self.tfm),
-                                                                   self.seeds_tips_moving,
+            self.fixed_ctrs_points = apply_transformation(self.fixed_ctrs_points, self.tfm)
+            self.seeds_tips_fixed = apply_transformation_on_seeds(self.tfm, self.seeds_tips_fixed,
                                                                    "affine")
             # self.warped_struct = get_contour_mask(self.warped_ctrs_points.T, self.meta, self.fixed_array.shape)
             # self.masked_warped_struct = np.ma.masked_where(self.warped_struct == 0, self.warped_struct)
@@ -819,7 +832,7 @@ class App():
 
     def upload_moving(self, values):
         self.message = ""
-        self.rmse = []
+        self.rmse = [None]
         self.masked_moving_struct = self.masked_moving_struct_orig = None
         self.moving_ctrs_points = self.moving_ctrs_points_orig = None
         self.moving_struct = None
@@ -834,8 +847,13 @@ class App():
         #     print(e)
         self.moving_array_orig = self.moving_array.copy()
         # set_meta_data_to_sitk_image(self.moving_sitk, self.moving_dict['meta'])
-        self.seeds_tips_moving = self.get_seeds(self.moving_dict)
-        self.seeds_tips_moving_orig = self.seeds_tips_moving.copy()
+        if "RTPLAN" in self.moving_dict.keys():
+            self.seeds_tips_moving = self.get_seeds(self.moving_dict)
+            self.seeds_tips_moving_orig = self.seeds_tips_moving.copy()
+        else:
+            self.show_seeds_uploader(2)
+            self.message = self.message + "\ndidn't find any RTPLAN to load. if you want to load " \
+                                          "seeds as contours, please load manually"
         # self.seeds_tips_warped = self.seeds_tips_moving.copy()
         if 'RTSTRUCT' in self.moving_dict.keys():
             self.moving_ctrs_points = read_structure(self.moving_dict['RTSTRUCT'])[0][1].T
@@ -855,13 +873,13 @@ class App():
         self.moving_viewer = DicomViewer(self.moving_array, self.window['-MOVING_CANVAS-'].TKCanvas, 'moving',
                                              self.masked_moving_struct)
         self.moving_viewer.show()
-        self.message = self.message + "{} was uploaded successfully".format(self.moving_dict['meta']['ID'].value)
+        self.message = self.message + "\n{} was uploaded successfully".format(self.moving_dict['meta']['ID'].value)
         self.update_massage(self.message)
         self.tfm = None
 
     def upload_fixed(self, values):
         self.message = ""
-        self.rmse = []
+        self.rmse = [None]
         self.masked_fixed_struct = self.masked_fixed_struct_orig = None
         self.fixed_ctrs_points = self.fixed_ctrs_points_orig = None
         self.fixed_struct = None
@@ -874,8 +892,13 @@ class App():
         #     set_meta_data_to_sitk_image(self.fixed_sitk, self.fixed_dict['meta'])
         # except Exception as e:
         #     print(e)
-        self.seeds_tips_fixed = self.get_seeds(self.fixed_dict)
-        self.seeds_tips_fixed_orig = self.seeds_tips_fixed.copy()
+        if "RTPLAN" in self.fixed_dict.keys():
+            self.seeds_tips_fixed = self.get_seeds(self.fixed_dict)
+            self.seeds_tips_fixed_orig = self.seeds_tips_fixed.copy()
+        else:
+            self.show_seeds_uploader(1)
+            self.message = self.message + "\ndidn't find any RTPLAN to load. if you want to load " \
+                                          "seeds as contours, please load manually"
         if 'RTSTRUCT' in self.fixed_dict.keys():
             self.fixed_ctrs_points = read_structure(self.fixed_dict['RTSTRUCT'])[0][1].T
             self.fixed_ctrs_points_orig = self.fixed_ctrs_points.copy()
@@ -893,7 +916,7 @@ class App():
         self.fixed_viewer = DicomViewer(self.fixed_array, self.window['-FIXED_CANVAS-'].TKCanvas, 'fixed',
                                             self.masked_fixed_struct)
         self.fixed_viewer.show()
-        self.message = self.message + "{} was uploaded successfully".format(self.fixed_dict['meta']['ID'].value)
+        self.message = self.message + "\n{} was uploaded successfully".format(self.fixed_dict['meta']['ID'].value)
         self.update_massage(self.message)
         print("after reading ", self.fixed_sitk.GetOrigin())
         self.tfm = None
@@ -902,17 +925,43 @@ class App():
         self.moving_array = self.moving_array_orig
         self.moving_sitk = read_image(self.moving_dict['CT'])
         self.fixed_sitk = read_image(self.fixed_dict['CT'])
-        self.seeds_tips_moving = self.seeds_tips_moving_orig
-        self.moving_ctrs_points = self.moving_ctrs_points_orig
+        # self.seeds_tips_moving = self.seeds_tips_moving_orig
+        # self.moving_ctrs_points = self.moving_ctrs_points_orig
         self.seeds_tips_fixed = self.seeds_tips_fixed_orig
         self.fixed_ctrs_points = self.fixed_ctrs_points_orig
-        self.rmse = []
+        self.rmse = [None]
         # self.update_arrays("affine")
         try:
             self.masked_moving_struct = self.masked_moving_struct_orig
             self.masked_fixed_struct = self.masked_fixed_struct_orig
         except:
             pass
+        self.hide_seeds_uploader(1)
+        self.hide_seeds_uploader(2)
+
+    def show_domain_params(self):
+        self.window[f"-DOMAIN-"].update(visible=True)
+        self.window[f"-DOMAIN_START_TEXT-"].update(visible=True)
+        self.window[f"-DOMAIN_START-"].update(visible=True)
+        self.window[f"-DOMAIN_END_TEXT-"].update(visible=True)
+        self.window[f"-DOMAIN_END-"].update(visible=True)
+
+    def hide_domain_params(self):
+        self.window[f"-DOMAIN-"].update(visible=False)
+        self.window[f"-DOMAIN_START-"].update(visible=False)
+        self.window[f"-DOMAIN_END-"].update(visible=False)
+        self.window[f"-DOMAIN_START_TEXT-"].update(visible=False)
+        self.window[f"-DOMAIN_END_TEXT-"].update(visible=False)
+
+    def show_seeds_uploader(self, num):
+        self.window[f"-SEEDS_TEXT_{num}-"].update(visible=True)
+        self.window[f"-SEEDS_INPUT_{num}-"].update(visible=True)
+        self.window[f"-SEEDS_BROWSER_{num}-"].update(visible=True)
+
+    def hide_seeds_uploader(self, num):
+        self.window[f"-SEEDS_TEXT_{num}-"].update(visible=False)
+        self.window[f"-SEEDS_INPUT_{num}-"].update(visible=False)
+        self.window[f"-SEEDS_BROWSER_{num}-"].update(visible=False)
 
     def hide_contours_brows(self):
         self.window["-FIXED_CONTOURS_TEXT-"].update(visible=False)
@@ -1022,6 +1071,7 @@ class App():
     def show_movement_buttons(self):
         self.window['-SHOW_MOVE-'].update(visible=True)
         self.window['-SHOW_PAIRS-'].update(visible=True)
+        self.window['-SHOW_PAIRS_INTERACTIVE-'].update(visible=True)
         self.window['-SAVE-'].update(visible=True)
 
     def use_saved_transformation(self):

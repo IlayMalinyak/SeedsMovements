@@ -11,6 +11,7 @@ import pandas as pd
 import registration
 from SimpleITK import AffineTransform, GetArrayFromImage, GetImageFromArray
 from scipy.ndimage import binary_dilation
+from matplotlib import pyplot as plt
 
 
 
@@ -226,7 +227,7 @@ def read_dicom(path,meta, cloud=False):
     return np.swapaxes(np.swapaxes(np.array(images), 0,2),0,1)
 
 
-def read_structure(dir):
+def read_structure(dir, seeds=False):
     """
     read contours
     :param dir: directory to folder with dcm file of contours
@@ -243,6 +244,8 @@ def read_structure(dir):
         meta = ds.StructureSetROISequence
         # print(ds)
         list_ctrs = []
+        list_seeds = []
+        list_orientations = []
         for i in range(len(ctrs)):
             data = ctrs[i].ContourSequence
             name = meta[i].ROIName
@@ -254,11 +257,27 @@ def read_structure(dir):
                 np_contour = np.zeros((3, len(contour) // 3))
                 for k in range(0, len(contour), 3):
                     np_contour[:, k // 3] = contour[k], contour[k + 1], contour[k + 2]
-                # if data[j].ContourGeometricType == "CLOSED_PLANAR":
-                    # vol += calc_poly_area(np_contour)
                 arr = np.hstack((arr, np_contour))
-            list_ctrs.append((name, arr))
+            if seeds:
+                cov = np.cov(arr)
+                w, v = np.linalg.eig(cov)
+                dxyz = v[:, np.argmax(w)]
+                center = np.mean(arr, axis=1)
+                list_seeds.append(center)
+                list_orientations.append(dxyz)
+                # fig = plt.figure()
+                # ax = fig.add_subplot(projection='3d')
+                # ax.scatter(arr[0], arr[1], arr[2])
+                # ax.scatter(center[0], center[1], center[2])
+                # ax.quiver(center[0], center[1], center[2], dxyz[0],dxyz[1], dxyz[2], length=5)
+                # plt.show()
+            else:
+                list_ctrs.append((name, arr))
+        if seeds:
+            return np.array(list_seeds).T, np.array(list_orientations).T
         return list_ctrs
+
+
 
 
 def pixel_to_mm_transformation_mat(meta, z_factor=-1):
@@ -273,7 +292,7 @@ def pixel_to_mm_transformation_mat(meta, z_factor=-1):
     """
     c_spacing,r_spacing,thickness = meta['pixelSpacing'][0], meta['pixelSpacing'][1],\
                                               meta['sliceThickness']
-    s_spacing = meta['sliceSpacing'] if "sliceSpacing" in meta.keys() else thickness
+    s_spacing = abs(meta['sliceSpacing']) if "sliceSpacing" in meta.keys() else abs(thickness)
     ipp, iop = meta['IPP'].value, meta['IOP'].value
     IPP = ipp
     IOP = iop
@@ -321,6 +340,31 @@ def get_spacing_array(meta):
         spacing = np.array([meta['pixelSpacing'][0],
                   meta['pixelSpacing'][1], meta['sliceThickness']])
     return spacing
+
+def get_contour_domain(ctr1, ctr2):
+    min_1 = np.min(ctr1, axis=1)
+    max_1 = np.max(ctr1, axis=1)
+    min_2 = np.min(ctr2, axis=1)
+    max_2 = np.max(ctr2, axis=1)
+    min_tot = np.min(np.vstack((min_1, min_2)), axis=0)
+    max_tot = np.max(np.vstack((max_1, max_2)), axis=0)
+    # min_tot -= [10, 10, 10]
+    # max_tot += [10, 10, 10]
+    return min_tot, max_tot
+
+
+def get_manual_domain(origin_px, end_px, meta):
+    M = pixel_to_mm_transformation_mat(meta)
+    origin_hom = np.vstack((origin_px[:,None], np.ones((1, 1))))
+    origin_hom[[0,1]] = origin_hom[[1,0]]
+    end_hom = np.vstack((end_px[:,None], np.ones((1, 1))))
+    end_hom[[0,1]] = end_hom[[1,0]]
+
+    end_hom = np.vstack((end_px[:, None], np.ones((1, 1))))
+    end_hom[[0, 1]] = end_hom[[1, 0]]
+    origin = M @ origin_hom
+    end = M @ end_hom
+    return np.squeeze(origin[:3], -1),np.squeeze(end[:3], -1)
 
 
 def wrap_image_with_matrix(fixed_arr, moving_arr, meta, transformation_mat):

@@ -10,6 +10,7 @@ import numpy as np
 import plotly.graph_objects as go
 from abc import ABC, abstractmethod
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.patches import Rectangle
 
 
 
@@ -33,6 +34,11 @@ class DicomViewer(BasicViewer):
         self.array = array
         self.canvas = canvas
         self.mask = mask
+        self.rect = Rectangle((0, 0), 1, 1, fill=False)
+        self.x0 = 0
+        self.y0 = 0
+        self.x1 = self.array.shape[1]
+        self.y1 = self.array.shape[0]
         # self.canvas.bind_all("<MouseWheel>", self.update_slice)
         self.fig, self.ax = plt.subplots(1, 1)
         self.figure_canvas_agg = FigureCanvasTkAgg(self.fig, self.canvas)
@@ -63,6 +69,7 @@ class DicomViewer(BasicViewer):
         self.figure_canvas_agg.draw()
         self.figure_canvas_agg.get_tk_widget().pack(side='top', fill='both')
 
+
     def update_slice(self, val):
         # print("scroll event on ", self.name)
         # self.ind = int(abs(self.slice_slider.val - self.slices))
@@ -75,30 +82,11 @@ class DicomViewer(BasicViewer):
         if self.mask is not None:
             self.struct.set_data(self.mask[..., self.ind - 1])
         self.im.axes.figure.canvas.draw()
+        self.draw_rect()
         # self.show()
 
     def set_array(self, array):
-        # self.axSlice.clear()
-        # self.ax.clear()
         self.array = array
-        # if len(array.shape) == 3:
-        #     rows, cols, self.slices = array.shape
-        #     self.channels = 0
-        # else:
-        #     rows, cols, self.channels, self.slices = self.array.shape
-        # self.ind = self.slices//2
-        # self.axSlice = plt.axes([0.1, 0.18, 0.05, 0.63])
-        # self.slice_slider = Slider(
-        #     ax=self.axSlice,
-        #     label='Slice',
-        #     valmin=1,
-        #     valmax=self.slices,
-        #     valinit=self.ind,
-        #     valstep=1, color='magenta',
-        #     orientation="vertical"
-        # )
-        # self.slice_slider.on_changed(self.update_slice)
-        # plt.subplots_adjust(left=0.25, bottom=0.1)
 
 
     def set_struct(self, array):
@@ -109,6 +97,33 @@ class DicomViewer(BasicViewer):
 
     def clear(self):
         self.figure_canvas_agg.get_tk_widget().forget()
+
+    def on_press(self, event):
+        if event.xdata > 3:
+            self.x0 = event.xdata
+            self.y0 = event.ydata
+
+    def on_release(self, event):
+        if event.xdata > 3:
+            self.x1 = event.xdata
+            self.y1 = event.ydata
+            print(self.x1, self.y1, self.x0, self.y0)
+            self.draw_rect()
+
+    def draw_rect(self):
+        self.rect.set_width(self.x1 - self.x0)
+        self.rect.set_height(self.y1 - self.y0)
+        self.rect.set_xy((self.x0, self.y0))
+        self.ax.figure.canvas.draw()
+
+    def get_rect(self):
+        return self.y0, self.x0, self.y1, self.x1
+
+
+    def annotate(self):
+        self.ax.add_patch(self.rect)
+        self.ax.figure.canvas.mpl_connect('button_press_event', self.on_press)
+        self.ax.figure.canvas.mpl_connect('button_release_event', self.on_release)
 
 
 class OverlayViewer(DicomViewer):
@@ -177,6 +192,9 @@ class OverlayViewer(DicomViewer):
         self.mask2 = mask2
 
 
+
+
+
 def parse_lists_from_file(path):
     with open(path, 'r') as f:
         list1 = f.readline().strip().split(',')
@@ -220,6 +238,7 @@ class viewer():
 
     def onscroll(self, event):
         if event.button == 'up':
+            print("up")
             self.ind = (self.ind - 1) % self.slices
         else:
             self.ind = (self.ind + 1) % self.slices
@@ -227,6 +246,8 @@ class viewer():
 
     def onkey(self, event):
         if event.key == 'up':
+            print("up")
+
             self.ind = (self.ind - 1) % self.slices
         else:
             self.ind = (self.ind + 1) % self.slices
@@ -454,6 +475,27 @@ def overlay_contours_interactive(ctrs1, ctrs2):
     fig.write_html('contours_overlay.html', auto_open=True)
     # fig.show()
 
+
+def plot_seeds_interactive(fig, seeds, title, color):
+    for i in range(seeds.shape[-1]):
+        legend = True if i == 0 else False
+        trace = go.Scatter3d(x=seeds[:,0,i],y=seeds[:,1,i], z=seeds[:,2,i], mode="lines", name=title,
+                              marker={'color': color}, showlegend=legend)
+        fig.add_trace(trace)
+    return fig
+
+
+def plot_seeds_and_contour_interactive(seeds1, seeds2, ctr):
+    fig = go.Figure()
+    trace1 = go.Scatter3d(x=ctr[:, 0], y=ctr[:, 1], z=ctr[:, 2], name="fixed", opacity=0.001, marker={'color':'cyan'},
+                          showlegend=False)
+    fig.add_trace(trace1)
+    fig = plot_seeds_interactive(fig, seeds1, "Seeds 1", "blue")
+    fig = plot_seeds_interactive(fig, seeds2, "Seeds 2", "orange")
+    fig['layout'].update(height=600, width=800, title="contours overlay")
+    print("sohwing plotly figure")
+    fig.write_html('contours_overlay.html', auto_open=True)
+    # fig.show()
 
 def plot_rmse(rmse, path, save=True):
     """
