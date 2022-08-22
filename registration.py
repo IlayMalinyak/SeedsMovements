@@ -207,9 +207,15 @@ def register_sitk(fixed_path, moving_path, meta, out_path, type="Bspline", param
         moving = moving_path
     # print(fixed)
     # print("shapes itk ", fixed.GetHeight(), fixed.GetWidth(), fixed.GetDepth())
-
+    print("origin before crop ", fixed.GetOrigin(), moving.GetOrigin())
+    print("size before crop ", fixed.GetSize())
+    # f_size = fixed.GetSize()
+    # domain_start = domain_start if domain_start is not None else [0,0,0]
+    # domain_end = domain_end if domain_end is not None else [f_size[1], f_size[0], f)
+    # fixed_reduced = fixed[domain_start[1]:domain_end[1], domain_start[0]:domain_end[0], domain_start[2]:domain_end[2]]
     print("----%s----" % type)
-    print("origin before registration ", fixed.GetOrigin(), moving.GetOrigin())
+    # print("origin before registration ", fixed_reduced.GetOrigin(), moving.GetOrigin())
+    # print("size before registration ", fixed_reduced.GetSize())
     if type == "Bspline":
         outTx = bspline_registration(fixed, moving, out_path, params, domain_start, domain_end)
     elif type == "Affine":
@@ -217,7 +223,6 @@ def register_sitk(fixed_path, moving_path, meta, out_path, type="Bspline", param
     else:
         raise ValueError("transformation of type: %s does not exist" % type)
     warped = warp_image_sitk(fixed, moving, outTx)
-
     outTx_inv, disp_img = get_inverse_transform(outTx, type)
     # warped_inv = warp_image_sitk(fixed, moving, outTx_inv)
 
@@ -290,11 +295,9 @@ def bspline_registration(fixed_image, moving_image, out_path, params, domain_sta
 
     registration_method = sitk.ImageRegistrationMethod()
 
-    origin = fixed_image.GetOrigin()
-    if domain_start is not None:
-        start_pixel = (np.array(domain_start - np.array(origin)) / np.array(fixed_image.GetSpacing())).astype(np.int16)
-        end_pixel = (np.array(domain_end - np.array(origin)) / np.array(fixed_image.GetSpacing())).astype(np.int16)
-        reduced = fixed_image[start_pixel[0]:end_pixel[0], start_pixel[1]:end_pixel[1], start_pixel[2]:end_pixel[2]]
+    # origin = fixed_image.GetOrigin()
+    if domain_start is not None and domain_end is not None:
+        reduced = fixed_image[domain_start[1]:domain_end[1], domain_start[0]:domain_end[0], domain_start[2]:domain_end[2]]
         print("reduced size = ", reduced.GetSize())
     else:
         reduced = fixed_image
@@ -326,6 +329,7 @@ def bspline_registration(fixed_image, moving_image, out_path, params, domain_sta
     registration_method.SetInterpolator(sitk.sitkBSpline)
 
     registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
+        # fixed_mask = sitk.Cast(sitk.GetImageFromArray(np.transpose(fixed_mask),(2,0,1)),sitk.sitkFloat32)
     registration_method.SetShrinkFactorsPerLevel(shrinkFactors=[4, 2, 1])
     registration_method.SetSmoothingSigmasPerLevel(smoothingSigmas=[2, 1, 0])
     registration_method.SmoothingSigmasAreSpecifiedInPhysicalUnitsOn()
@@ -333,7 +337,7 @@ def bspline_registration(fixed_image, moving_image, out_path, params, domain_sta
     registration_method.AddCommand(sitk.sitkIterationEvent, lambda: command_iteration(registration_method))
     plot_metric(registration_method)
 
-    final_transformation = registration_method.Execute(fixed_image, moving_image)
+    final_transformation = registration_method.Execute(reduced, moving_image)
     exceute_metric_plot(registration_method, out_path, "Bspline")
     print('\nOptimizer\'s stopping condition, {0}'.format(registration_method.GetOptimizerStopConditionDescription()))
     return final_transformation

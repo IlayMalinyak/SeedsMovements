@@ -34,7 +34,7 @@ class DicomViewer(BasicViewer):
         self.array = array
         self.canvas = canvas
         self.mask = mask
-        self.rect = Rectangle((0, 0), 1, 1, fill=False)
+        self.rect = Rectangle((0, 0), 1, 1, fill=False, color='red')
         self.x0 = 0
         self.y0 = 0
         self.x1 = self.array.shape[1]
@@ -335,11 +335,9 @@ def plot_individual_moves(case, dists, error, save=True):
     :param error: array of errors (same length as knn_dists)
     :return: None
     """
-    fig = plt.figure()
-    # ax = fig.add_subplot()
+    plt.figure()
     x = np.arange(1, len(dists) + 1)
     y = dists
-    # plt.scatter(x, y, color="red")
     plt.errorbar(x, y, np.average(error, axis=0), fmt="o", color="b")
 
     plt.axhline(y=np.average(y), xmax=max(x), linestyle="--", label="Average", color="black")
@@ -351,6 +349,36 @@ def plot_individual_moves(case, dists, error, save=True):
     if save:
         plt.savefig("./movement_output/%s/movements.png" % case)
     plt.close()
+
+
+def plot_individual_moves_outliers(case, dists, error, outliers_idx, save=True):
+    fig = plt.figure()
+    ax = fig.add_subplot()
+    x = np.arange(1, len(dists) + 1)
+    # y = dists
+    outliers_bool = np.array([False]*len(dists))
+    outliers_bool[outliers_idx] = True
+    outliers = dists[outliers_idx]
+    outliers_idx = x[outliers_idx]
+    inliers = dists[np.logical_not(outliers_bool)]
+    inliers_idx = x[np.logical_not(outliers_bool)]
+    inliers_error = error[np.logical_not(outliers_bool)]
+    ax.errorbar(inliers_idx, inliers, np.average(inliers_error, axis=0), fmt="o", color="b")
+    average = np.average(inliers)
+    ax.axhline(y=average, xmax=max(x), linestyle="--", color="black", label='Average: {0:.2f}'.format(average))
+    ax.scatter(outliers_idx, outliers, color='red')
+    ax.set_title("%s individual moves" % case)
+    ax.set_xlabel("# seed")
+    ax.set_ylabel("movement (mm)")
+    handles, labels = ax.get_legend_handles_labels()
+    outliers_patch = mpatches.Patch(color="red", label='Outliers')
+    handles.append(outliers_patch)
+    # plt.ylim((0,15))
+    plt.legend(handles=handles)
+    if save:
+        plt.savefig("./movement_output/%s/movements_outliers.png" % case)
+    plt.close()
+
 
 
 def plot_pairs(seeds1, seeds2, case, save=True):
@@ -373,8 +401,41 @@ def plot_pairs(seeds1, seeds2, case, save=True):
     ax.set_xlabel('x')
     ax.set_ylabel('y')
     ax.set_zlabel('z')
+    fixed_patch = mpatches.Patch(color='b', label='Fixed Seeds')
+    moving_patch = mpatches.Patch(color='orange', label='Moving Seeds')
+    plt.legend(handles=[fixed_patch, moving_patch])
+
     if save:
         plt.savefig("./movement_output/%s/pairs.png" % (case))
+    plt.close()
+
+
+def plot_pairs_with_outliers(seeds1, seeds2, outliers_idx, case, save=True):
+    fig = plt.figure(figsize=(8,8 ))
+    ax = fig.add_subplot(projection='3d')
+    n = seeds1.shape[-1]
+    for i in range(n):
+        color1 = 'r' if i in outliers_idx else 'b'
+        color2 = 'magenta' if i in outliers_idx else 'orange'
+        ax.plot([seeds1[0, 0, i], seeds1[2, 0, i]], [seeds1[0, 1, i], seeds1[2, 1, i]],
+                [seeds1[0, 2, i], seeds1[2, 2, i]], color=color1)
+        ax.plot([seeds2[0, 0, i], seeds2[2, 0, i]], [seeds2[0, 1, i], seeds2[2, 1, i]],
+                [seeds2[0, 2, i], seeds2[2, 2, i]], color=color2)
+        # ax.plot([seeds1[1, 0, i], seeds2[1, 0, i]], [seeds1[1, 1, i], seeds2[1, 1, i]],
+        #         [seeds1[1, 2, i], seeds2[1, 2, i]], color='green', alpha=0.5,
+        #         linestyle='--')
+    ax.set_title(case)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_zlabel('z')
+    fixed_patch = mpatches.Patch(color='b', label='Fixed Seeds')
+    moving_patch = mpatches.Patch(color='orange', label='Moving Seeds')
+    fixed_out_patch = mpatches.Patch(color='r', label='Fixed Outliers')
+    moving_out_patch = mpatches.Patch(color='magenta', label='Moving Outliers')
+    plt.legend(handles=[fixed_patch, moving_patch, fixed_out_patch, moving_out_patch])
+
+    if save:
+        plt.savefig("./movement_output/%s/pairs_outliers.png" % (case))
     plt.close()
 
 

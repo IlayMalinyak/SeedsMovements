@@ -69,6 +69,7 @@ class App():
         #
         # self.window_background['-C-'].expand(True, False,
         #                                 False)  # expand the titlebar's rightmost column so that it resizes correctly
+        sg.theme('Dark Blue 2')
 
         data_column = [
             [sg.Text('Experiment name ', size=(15, 1), font=font_header)],
@@ -83,9 +84,9 @@ class App():
              sg.FolderBrowse(font=font_text, key='-SEEDS_BROWSER_1-', visible=False),
              sg.Button("Draw Domain", font=font_text, key="-DOMAIN-", visible=False),
              sg.Text('z start', font=font_text, visible=False,key="-DOMAIN_START_TEXT-"),
-             sg.In(size=(6, 1), enable_events=True, key='-DOMAIN_START-', visible=False),
+             sg.In(size=(6, 1), enable_events=True, key='-DOMAIN_START-', visible=False, do_not_clear=False),
              sg.Text('z end', font=font_text, visible=False, key="-DOMAIN_END_TEXT-"),
-             sg.In(size=(6, 1), enable_events=True, key='-DOMAIN_END-' , visible=False)],
+             sg.In(size=(6, 1), enable_events=True, key='-DOMAIN_END-' , visible=False, do_not_clear=False)],
             [sg.Text('DICOM dir 2', font=font_text), sg.In(size=(10, 1), enable_events=True, key='-MOVING_FOLDER-'),
              sg.FolderBrowse(font=font_text),
              sg.Text('seeds dir 2', font=font_text, key='-SEEDS_TEXT_2-', visible=False),
@@ -177,8 +178,9 @@ class App():
             [sg.Button("Calculate", font=font_text, key='-CALC_MOVE-')],
             [sg.Button("Show movements", font=font_text, key='-SHOW_MOVE-', visible=False), sg.Button("Show Pairs",
             font=font_text, key='-SHOW_PAIRS-', visible=False), sg.Button("Show Pairs interactive",
-            font=font_text, key='-SHOW_PAIRS_INTERACTIVE-', visible=False)
-             ,sg.Button("Save results to csv", font=font_text, key='-SAVE-', visible=False)],
+            font=font_text, key='-SHOW_PAIRS_INTERACTIVE-', visible=False),
+             sg.Button("Exclude Seeds", font=font_text, key='-EXCLUDE_WIN-', visible=False)],
+             [sg.Button("Save results to csv", font=font_text, key='-SAVE-', visible=False)],
             [sg.HSeparator()],
             [sg.VPush()],
             [sg.VPush()],
@@ -209,8 +211,8 @@ class App():
             sg.VSeperator(),
             sg.Column(results_column, vertical_alignment='top', element_justification='c')]]
 
-        self.window = sg.Window('Demo Application - Seed Movement', layout, finalize=True,
-                            return_keyboard_events=True)
+        self.main_window = sg.Window('Demo Application - Seed Movement', layout, finalize=True,
+                                     return_keyboard_events=True)
         self.case_name = None
         self.registration_plot_path = None
         self.fixed_dict = None
@@ -255,6 +257,9 @@ class App():
         self.inv_tfm = None
         self.first_sitk = True
 
+        self.exclude_win = None
+        self.excludes = []
+
 
         self.assignment_method = None
         # self.fixed_seeds, self.fixed_orientation = None, None
@@ -272,8 +277,61 @@ class App():
         self.init_param_dict()
         self.message = ""
 
+    def create_exclusion_window(self):
+        data_column = [[sg.Text(f"Enter outliers indexes between 1 and {self.seeds_tips_fixed.shape[-1]} seperated "
+                                f"by comma", font=font_header)],
+                  [sg.Input(key='-EXCLUDE_IN-', size=(30,4), enable_events=True)],
+                  [sg.Button('Preview', font=font_header, key='-EXCLUDE_PREV-'),  sg.Button('Apply', font=font_header,
+                                                                                            key='-EXCLUDE_APPLY-')],
+                   [sg.Text('Movements', font=font_header)],
+                   [sg.Image(f"./movement_output/{self.case_name}/movements.png",
+                             size=(600, 600), key='-EXCLUDE_MOVES-')]]
+        img_column = [[sg.Text('Seeds', font=font_header)],
+                      [sg.Image(f"./movement_output/{self.case_name}/pairs.png",
+                                size=(800, 800), key='-EXCLUDE_IMAGE-')]]
+
+        layout = [
+            [
+                sg.Column(data_column, vertical_alignment='c', element_justification='c'),
+                sg.VSeperator(),
+                sg.Column(img_column, element_justification='c')]]
+        return sg.Window('Exclusion window', layout, finalize=True, element_justification='c')
+
+    def run_exclude_window(self):
+        while True:
+            event, values = self.exclude_win.read()
+            print(event)
+            # if event == "-EXCLUDE_IN-":
+            #     excludes = [int(i) for i in values[event].split(',')]
+            #     self.inliers_idx = [i for i in range(self.seeds_tips_fixed.shape[-1]) if i not in excludes]
+            if event == "-EXCLUDE_PREV-":
+                try:
+                    self.excludes = np.array([int(i) for i in values["-EXCLUDE_IN-"].split(',')]) - 1
+                except ValueError:
+                    self.update_massage("error in outliers indexes")
+                    self.excludes = []
+                error = np.zeros(len(self.assignment_dists))
+                error += self.rmse[-1] if self.rmse[-1] is not None else 0
+                error += BASE_ERROR
+                # self.inliers_idx = [i for i in range(self.seeds_tips_fixed.shape[-1]) if i not in excludes]
+                plot_pairs_with_outliers(self.seeds_tips_fixed, self.seeds_tips_moving, self.excludes, self.case_name)
+                plot_individual_moves_outliers(self.case_name, self.assignment_dists, error, self.excludes)
+                self.exclude_win['-EXCLUDE_IMAGE-'].update("./movement_output/{}/pairs_outliers.png".format(self.case_name))
+                self.exclude_win['-EXCLUDE_MOVES-'].update("./movement_output/{}/movements_outliers.png".format(self.case_name))
+
+            if event == "-EXCLUDE_APPLY-":
+                inliers_bool = np.array([True]*self.seeds_tips_fixed.shape[-1])
+                inliers_bool[self.excludes] = False
+                self.seeds_tips_fixed = self.seeds_tips_fixed[...,inliers_bool]
+                self.seeds_tips_moving = self.seeds_tips_moving[..., inliers_bool]
+                self.exclude_win.close()
+                print("closing window")
+                break
+            elif event == sg.WIN_CLOSED:  # Window close button event
+                break
+
     def update_massage(self, massage):
-        self.window['-MSG-'].update(massage)
+        self.main_window['-MSG-'].update(massage)
 
     @staticmethod
     def find_files_with_extention(folder, extention):
@@ -282,7 +340,8 @@ class App():
 
     def run(self):
         while True:
-            event, values = self.window.read()
+            event, values = self.main_window.read()
+            print(event)
             if event == "-NAME-":
                 self.case_name = values[event].lower()
                 self.registration_plot_path = f'./registration_output/{self.case_name}/registration_res.png'
@@ -295,11 +354,13 @@ class App():
                 self.seeds_tips_fixed = self.seeds_tips_fixed_orig = get_seeds_tips(seeds, orientation)
                 self.message = f"{self.seeds_tips_fixed.shape[-1]} seeds was loaded from contours"
                 self.update_massage(self.message)
+                self.hide_seeds_uploader(1)
             if event == "-SEEDS_INPUT_2-":
                 seeds, orientation = read_structure(values[event], seeds=True)
                 self.seeds_tips_moving = self.seeds_tips_moving_orig = get_seeds_tips(seeds, orientation)
                 self.message = f"{self.seeds_tips_moving.shape[-1]} seeds was loaded from contours"
                 self.update_massage(self.message)
+                self.hide_seeds_uploader(2)
             if event == "-DOMAIN-":
                 if self.fixed_viewer is not None:
                     self.fixed_viewer.annotate()
@@ -309,10 +370,15 @@ class App():
                     self.domain = np.array([int(y0),int(x0),0]), np.array([int(y1),int(x1),self.fixed_array.shape[-1]])
             if event == "-DOMAIN_START-":
                 if self.domain is not None:
-                    self.domain[0][-1] = int(values[event])
+                    try:
+                        self.domain[0][-1] = int(values[event])
+                    except ValueError:
+                        pass
             if event == "-DOMAIN_END-":
-                if self.domain is not None:
+                try:
                     self.domain[1][-1] = int(values[event])
+                except ValueError:
+                    pass
             if event == "-REG_MENU-":
                 self.clear_all_params()
                 self.registration_type = values[event]
@@ -327,8 +393,8 @@ class App():
                     self.show_domain_params()
                 elif self.registration_type == "Use saved Registration":
                     print("should show uploader")
-                    self.window['-TFM_INPUT-'].update(visible=True)
-                    self.window['-TFM_UPLOADER-'].update(visible=True)
+                    self.main_window['-TFM_INPUT-'].update(visible=True)
+                    self.main_window['-TFM_UPLOADER-'].update(visible=True)
                     self.hide_domain_params()
             if event == "-TFM_INPUT-":
                 tfm_path = values[event]
@@ -412,7 +478,7 @@ class App():
                 self.update_massage(self.message)
             if event == "-PLOT_REG-":
                 try:
-                    self.window['-IMAGE-'].update(self.registration_plot_path)
+                    self.main_window['-IMAGE-'].update(self.registration_plot_path)
                 except Exception as e:
                     self.update_massage("Nothing to show")
             if event == "-OVERLAY-":
@@ -430,7 +496,7 @@ class App():
                 if self.overlay_viewer is not None:
                     self.overlay_viewer.clear()
                 # self.masked_moving_struct = self.masked_fixed_struct = None
-                self.overlay_viewer = OverlayViewer(self.fixed_array, self.moving_array, self.window['-OVERLAY_CANVAS-'].TKCanvas,
+                self.overlay_viewer = OverlayViewer(self.fixed_array, self.moving_array, self.main_window['-OVERLAY_CANVAS-'].TKCanvas,
                                                     'overlay')
                 self.overlay_viewer.show()
                 # else:
@@ -459,6 +525,9 @@ class App():
 
             if self.assignment_method == "Upload List":
                 self.show_assignment_uploader()
+            if event == "-EXCLUDE_WIN-":
+                self.exclude_win = self.create_exclusion_window()
+                self.run_exclude_window()
             if event == "-CALC_MOVE-":
                 self.create_case_dir()
                 if self.fixed_idx is not None:
@@ -469,13 +538,15 @@ class App():
                                             f'\nSeeds number are: {self.seeds_tips_fixed.shape[-1]},'
                                             f' {self.seeds_tips_moving.shape[-1]} ')
                     else:
-                        seeds1_assigned = self.seeds_tips_fixed[..., self.fixed_idx]
-                        seeds2_assigned = self.seeds_tips_moving[..., self.moving_idx]
+                        self.seeds_tips_fixed = self.seeds_tips_fixed[...,self.fixed_idx]
+                        self.seeds_tips_moving = self.seeds_tips_moving[..., self.moving_idx]
+                        # seeds1_assigned = self.seeds_tips_fixed[..., self.fixed_idx]
+                        # seeds2_assigned = self.seeds_tips_moving[..., self.moving_idx]
                         self.assignment_dists = np.array(
-                            [calc_dist(seeds1_assigned[..., i], seeds2_assigned[..., i], calc_max=True)
-                             for i in range(seeds2_assigned.shape[-1])])
-                        error =  np.ones(len(self.assignment_dists))*self.rmse[-1] if self.rmse[-1] is not None else None
-                        analyze_distances(self.case_name, self.assignment_dists, seeds1_assigned, seeds2_assigned,
+                            [calc_dist(self.seeds_tips_fixed[..., i], self.seeds_tips_moving[..., i], calc_max=True)
+                             for i in range(self.seeds_tips_moving.shape[-1])])
+                        error = np.ones(len(self.assignment_dists))*self.rmse[-1] if self.rmse[-1] is not None else None
+                        analyze_distances(self.case_name, self.assignment_dists, self.seeds_tips_fixed, self.seeds_tips_moving,
                                           error)
                         self.message = 'Number of assignments - {}\n sum of distances - '\
                                             '{:.2f}\n average distance - {:.2f}'\
@@ -487,10 +558,10 @@ class App():
                     self.update_massage("Please assign pair first")
             if event == "-SHOW_MOVE-":
                 self.plot_name = "moves"
-                self.window['-IMAGE-'].update("./movement_output/{}/movements.png".format(self.case_name))
+                self.main_window['-IMAGE-'].update("./movement_output/{}/movements.png".format(self.case_name))
             if event == "-SHOW_PAIRS-":
                 self.plot_name = "pairs"
-                self.window['-IMAGE-'].update("./movement_output/{}/pairs.png".format(self.case_name))
+                self.main_window['-IMAGE-'].update("./movement_output/{}/pairs.png".format(self.case_name))
             if event == "-SHOW_PAIRS_INTERACTIVE-":
                 plot_seeds_and_contour_interactive(self.seeds_tips_fixed, self.seeds_tips_moving, self.moving_ctrs_points)
             if event == "-SAVE-":
@@ -539,32 +610,32 @@ class App():
             self.meta = self.fixed_dict['meta']
 
     def show_manual_registration_params(self):
-        self.window['-XY_ROT_TEXT-'].update(visible=True)
-        self.window['-XY_ROT-'].update("", visible=True)
-        self.window['-XZ_ROT_TEXT-'].update(visible=True)
-        self.window['-XZ_ROT-'].update("", visible=True)
-        self.window['-YZ_ROT_TEXT-'].update(visible=True)
-        self.window['-YZ_ROT-'].update("", visible=True)
-        self.window['-X_SHIFT_TEXT-'].update(visible=True)
-        self.window['-X_SHIFT-'].update("", visible=True)
-        self.window['-Y_SHIFT_TEXT-'].update(visible=True)
-        self.window['-Y_SHIFT-'].update("", visible=True)
-        self.window['-Z_SHIFT_TEXT-'].update(visible=True)
-        self.window['-Z_SHIFT-'].update("", visible=True)
+        self.main_window['-XY_ROT_TEXT-'].update(visible=True)
+        self.main_window['-XY_ROT-'].update("", visible=True)
+        self.main_window['-XZ_ROT_TEXT-'].update(visible=True)
+        self.main_window['-XZ_ROT-'].update("", visible=True)
+        self.main_window['-YZ_ROT_TEXT-'].update(visible=True)
+        self.main_window['-YZ_ROT-'].update("", visible=True)
+        self.main_window['-X_SHIFT_TEXT-'].update(visible=True)
+        self.main_window['-X_SHIFT-'].update("", visible=True)
+        self.main_window['-Y_SHIFT_TEXT-'].update(visible=True)
+        self.main_window['-Y_SHIFT-'].update("", visible=True)
+        self.main_window['-Z_SHIFT_TEXT-'].update(visible=True)
+        self.main_window['-Z_SHIFT-'].update("", visible=True)
 
     def hide_manual_registration_params(self):
-        self.window['-XY_ROT_TEXT-'].update(visible=False)
-        self.window['-XY_ROT-'].update(visible=False)
-        self.window['-XZ_ROT_TEXT-'].update(visible=False)
-        self.window['-XZ_ROT-'].update(visible=False)
-        self.window['-YZ_ROT_TEXT-'].update(visible=False)
-        self.window['-YZ_ROT-'].update(visible=False)
-        self.window['-X_SHIFT_TEXT-'].update(visible=False)
-        self.window['-X_SHIFT-'].update(visible=False)
-        self.window['-Y_SHIFT_TEXT-'].update(visible=False)
-        self.window['-Y_SHIFT-'].update(visible=False)
-        self.window['-Z_SHIFT_TEXT-'].update(visible=False)
-        self.window['-Z_SHIFT-'].update(visible=False)
+        self.main_window['-XY_ROT_TEXT-'].update(visible=False)
+        self.main_window['-XY_ROT-'].update(visible=False)
+        self.main_window['-XZ_ROT_TEXT-'].update(visible=False)
+        self.main_window['-XZ_ROT-'].update(visible=False)
+        self.main_window['-YZ_ROT_TEXT-'].update(visible=False)
+        self.main_window['-YZ_ROT-'].update(visible=False)
+        self.main_window['-X_SHIFT_TEXT-'].update(visible=False)
+        self.main_window['-X_SHIFT-'].update(visible=False)
+        self.main_window['-Y_SHIFT_TEXT-'].update(visible=False)
+        self.main_window['-Y_SHIFT-'].update(visible=False)
+        self.main_window['-Z_SHIFT_TEXT-'].update(visible=False)
+        self.main_window['-Z_SHIFT-'].update(visible=False)
 
     def get_seeds(self, dict):
         print("loading seeds")
@@ -588,11 +659,12 @@ class App():
         if self.registration_type is not None:
             if self.fixed_array is not None and self.moving_array is not None:
                 if self.case_name is not None:
+                    domain = True if self.domain is not None else False
                     self.message = "Registering...\nThis may take a while"
                     self.update_massage(self.message)
-                    self.window.refresh()
+                    self.main_window.refresh()
                     if self.registration_type == "Bspline" or self.registration_type == "Affine":
-                        self.run_sitk_registration(self.registration_type)
+                        self.run_sitk_registration(self.registration_type, domain=domain)
                     elif self.registration_type == "Affine+Bspline":
                         self.run_composite_sitk_registration(["Affine", "Bspline"])
                     elif self.registration_type =='ICP':
@@ -662,9 +734,8 @@ class App():
         tmp_opt, tmp_metric, tmp_smp = self.registration_params["optimizer"], self.registration_params["metric"],\
         self.registration_params['sampling_percentage']
         for i in range(len(types)):
-            # self.registration_params['iterations'] = iterations[i]
-            # self.registration_type = types[i]
-            self.run_sitk_registration(types[i], apply=False)
+            domain = False if i == 0 else True
+            self.run_sitk_registration(types[i], apply=False, domain=domain)
             print("transform type ", self.tfm.GetTransformEnum())
             if self.tfm.GetTransformEnum() == 13:
                 try:
@@ -690,26 +761,25 @@ class App():
         self.rmse.append(calc_rmse(self.fixed_ctrs_points.T, self.moving_ctrs_points.T, 0.001))
         self.param_stack.append({"RMSE": self.rmse[-1]})
 
-    def run_sitk_registration(self, type, apply=True):
+    def run_sitk_registration(self, type, apply=True, domain=False):
         print(self.registration_type)
         print(self.registration_params['optimizer'], self.registration_params['metric'], self.registration_params['iterations'])
-        if self.domain is None:
-            self.domain = get_contour_domain(self.fixed_ctrs_points.T, self.moving_ctrs_points.T)
-        else:
+        if domain:
             y0,x0,y1,x1 = self.fixed_viewer.get_rect()
             self.domain[0][:2] = [int(y0),int(x0)]
             self.domain[1][:2] = [int(y1),int(x1)]
-        print("domain is ", self.domain)
-        num_slices = self.fixed_array.shape[-1]
-        # domain = get_manual_domain(np.array([300,150,num_slices - 200]), np.array([450,320,num_slices - 270]), self.fixed_dict['meta'])
+            dom1, dom2 = self.domain[0], self.domain[1]
+            print("domain is ", self.domain)
+        else:
+            dom1, dom2 = None, None
         if len(self.reg_stack) == 0 or all(np.array(self.reg_stack) == 'ICP'):
             self.fixed_sitk, self.moving_sitk, self.tfm, self.inv_tfm, self.disp_img = register_sitk(
                 self.fixed_dict['CT'], self.moving_dict['CT'], self.fixed_dict['meta'], self.registration_plot_path,
-                type, self.registration_params, self.domain[0], self.domain[1])
+                type, self.registration_params, dom1, dom2)
         else:
             self.fixed_sitk, self.moving_sitk, self.tfm, self.inv_tfm, self.disp_img = register_sitk(
                 self.fixed_sitk, self.moving_sitk, self.moving_dict['meta'], self.registration_plot_path,
-                type, self.registration_params, self.domain[0], self.domain[1])
+                type, self.registration_params, dom1, dom2)
         if apply:
             self.seeds_tips_fixed = apply_transformation_on_seeds(self.tfm,
                                                                        self.seeds_tips_fixed,
@@ -870,8 +940,8 @@ class App():
                 self.update_massage(self.message)
         if self.moving_viewer is not None:
             self.moving_viewer.clear()
-        self.moving_viewer = DicomViewer(self.moving_array, self.window['-MOVING_CANVAS-'].TKCanvas, 'moving',
-                                             self.masked_moving_struct)
+        self.moving_viewer = DicomViewer(self.moving_array, self.main_window['-MOVING_CANVAS-'].TKCanvas, 'moving',
+                                         self.masked_moving_struct)
         self.moving_viewer.show()
         self.message = self.message + "\n{} was uploaded successfully".format(self.moving_dict['meta']['ID'].value)
         self.update_massage(self.message)
@@ -913,8 +983,8 @@ class App():
                 self.update_massage(self.message)
         if self.fixed_viewer is not None:
             self.fixed_viewer.clear()
-        self.fixed_viewer = DicomViewer(self.fixed_array, self.window['-FIXED_CANVAS-'].TKCanvas, 'fixed',
-                                            self.masked_fixed_struct)
+        self.fixed_viewer = DicomViewer(self.fixed_array, self.main_window['-FIXED_CANVAS-'].TKCanvas, 'fixed',
+                                        self.masked_fixed_struct)
         self.fixed_viewer.show()
         self.message = self.message + "\n{} was uploaded successfully".format(self.fixed_dict['meta']['ID'].value)
         self.update_massage(self.message)
@@ -925,11 +995,12 @@ class App():
         self.moving_array = self.moving_array_orig
         self.moving_sitk = read_image(self.moving_dict['CT'])
         self.fixed_sitk = read_image(self.fixed_dict['CT'])
-        # self.seeds_tips_moving = self.seeds_tips_moving_orig
+        self.seeds_tips_moving = self.seeds_tips_moving_orig
         # self.moving_ctrs_points = self.moving_ctrs_points_orig
         self.seeds_tips_fixed = self.seeds_tips_fixed_orig
         self.fixed_ctrs_points = self.fixed_ctrs_points_orig
         self.rmse = [None]
+        self.domain = None
         # self.update_arrays("affine")
         try:
             self.masked_moving_struct = self.masked_moving_struct_orig
@@ -938,94 +1009,97 @@ class App():
             pass
         self.hide_seeds_uploader(1)
         self.hide_seeds_uploader(2)
+        self.hide_domain_params()
 
     def show_domain_params(self):
-        self.window[f"-DOMAIN-"].update(visible=True)
-        self.window[f"-DOMAIN_START_TEXT-"].update(visible=True)
-        self.window[f"-DOMAIN_START-"].update(visible=True)
-        self.window[f"-DOMAIN_END_TEXT-"].update(visible=True)
-        self.window[f"-DOMAIN_END-"].update(visible=True)
+        self.main_window[f"-DOMAIN-"].update(visible=True)
+        self.main_window[f"-DOMAIN_START_TEXT-"].update(visible=True)
+        self.main_window[f"-DOMAIN_START-"].update(visible=True)
+        self.main_window[f"-DOMAIN_START-"].update('')
+        self.main_window[f"-DOMAIN_END_TEXT-"].update(visible=True)
+        self.main_window[f"-DOMAIN_END-"].update(visible=True)
+        self.main_window[f"-DOMAIN_END-"].update('')
 
     def hide_domain_params(self):
-        self.window[f"-DOMAIN-"].update(visible=False)
-        self.window[f"-DOMAIN_START-"].update(visible=False)
-        self.window[f"-DOMAIN_END-"].update(visible=False)
-        self.window[f"-DOMAIN_START_TEXT-"].update(visible=False)
-        self.window[f"-DOMAIN_END_TEXT-"].update(visible=False)
+        self.main_window[f"-DOMAIN-"].update(visible=False)
+        self.main_window[f"-DOMAIN_START-"].update(visible=False)
+        self.main_window[f"-DOMAIN_END-"].update(visible=False)
+        self.main_window[f"-DOMAIN_START_TEXT-"].update(visible=False)
+        self.main_window[f"-DOMAIN_END_TEXT-"].update(visible=False)
 
     def show_seeds_uploader(self, num):
-        self.window[f"-SEEDS_TEXT_{num}-"].update(visible=True)
-        self.window[f"-SEEDS_INPUT_{num}-"].update(visible=True)
-        self.window[f"-SEEDS_BROWSER_{num}-"].update(visible=True)
+        self.main_window[f"-SEEDS_TEXT_{num}-"].update(visible=True)
+        self.main_window[f"-SEEDS_INPUT_{num}-"].update(visible=True)
+        self.main_window[f"-SEEDS_BROWSER_{num}-"].update(visible=True)
 
     def hide_seeds_uploader(self, num):
-        self.window[f"-SEEDS_TEXT_{num}-"].update(visible=False)
-        self.window[f"-SEEDS_INPUT_{num}-"].update(visible=False)
-        self.window[f"-SEEDS_BROWSER_{num}-"].update(visible=False)
+        self.main_window[f"-SEEDS_TEXT_{num}-"].update(visible=False)
+        self.main_window[f"-SEEDS_INPUT_{num}-"].update(visible=False)
+        self.main_window[f"-SEEDS_BROWSER_{num}-"].update(visible=False)
 
     def hide_contours_brows(self):
-        self.window["-FIXED_CONTOURS_TEXT-"].update(visible=False)
-        self.window["-FIXED_CONTOURS_INPUT-"].update(visible=False)
-        self.window["-FIXED_CONTOURS_BROWS-"].update(visible=False)
-        self.window["-MOVING_CONTOURS_TEXT-"].update(visible=False)
-        self.window["-MOVING_CONTOURS_INPUT-"].update(visible=False)
-        self.window["-MOVING_CONTOURS_BROWS-"].update(visible=False)
+        self.main_window["-FIXED_CONTOURS_TEXT-"].update(visible=False)
+        self.main_window["-FIXED_CONTOURS_INPUT-"].update(visible=False)
+        self.main_window["-FIXED_CONTOURS_BROWS-"].update(visible=False)
+        self.main_window["-MOVING_CONTOURS_TEXT-"].update(visible=False)
+        self.main_window["-MOVING_CONTOURS_INPUT-"].update(visible=False)
+        self.main_window["-MOVING_CONTOURS_BROWS-"].update(visible=False)
 
     def show_contours_brows(self):
-        self.window["-FIXED_CONTOURS_TEXT-"].update(visible=True)
-        self.window["-FIXED_CONTOURS_INPUT-"].update(visible=True)
-        self.window["-FIXED_CONTOURS_BROWS-"].update(visible=True)
-        self.window["-MOVING_CONTOURS_TEXT-"].update(visible=True)
-        self.window["-MOVING_CONTOURS_INPUT-"].update(visible=True)
-        self.window["-MOVING_CONTOURS_BROWS-"].update(visible=True)
+        self.main_window["-FIXED_CONTOURS_TEXT-"].update(visible=True)
+        self.main_window["-FIXED_CONTOURS_INPUT-"].update(visible=True)
+        self.main_window["-FIXED_CONTOURS_BROWS-"].update(visible=True)
+        self.main_window["-MOVING_CONTOURS_TEXT-"].update(visible=True)
+        self.main_window["-MOVING_CONTOURS_INPUT-"].update(visible=True)
+        self.main_window["-MOVING_CONTOURS_BROWS-"].update(visible=True)
 
     def show_global_params(self):
-        self.window['-OPT_TEXT-'].update(visible=True)
-        self.window['-OPT_MENU-'].update(visible=True)
-        self.window['-METRIC_TEXT-'].update(visible=True)
-        self.window['-METRIC_MENU-'].update(visible=True)
+        self.main_window['-OPT_TEXT-'].update(visible=True)
+        self.main_window['-OPT_MENU-'].update(visible=True)
+        self.main_window['-METRIC_TEXT-'].update(visible=True)
+        self.main_window['-METRIC_MENU-'].update(visible=True)
         for i in range(1,4):
-            self.window[f'-GLOBAL_PARAM_TEXT_{i}-'].update(visible=True)
-            self.window[f'-GLOBAL_PARAM_{i}-'].update(str(GLOBAL_PARAM_INIT[i-1]), visible=True)
+            self.main_window[f'-GLOBAL_PARAM_TEXT_{i}-'].update(visible=True)
+            self.main_window[f'-GLOBAL_PARAM_{i}-'].update(str(GLOBAL_PARAM_INIT[i - 1]), visible=True)
         if self.registration_type == "Affine+Bspline":
-            self.window['-OPT_TEXT_2-'].update(visible=True)
-            self.window['-OPT_MENU_2-'].update(visible=True)
-            self.window['-METRIC_TEXT_2-'].update(visible=True)
-            self.window['-METRIC_MENU_2-'].update(visible=True)
-            self.window['-SAMPLE_TEXT_2-'].update(visible=True)
-            self.window['-SAMPLE_2-'].update(visible=True)
-            self.window['-NUM_ITER_2_TEXT-'].update(visible=True)
-            self.window['-NUM_ITER_2-'].update(visible=True)
+            self.main_window['-OPT_TEXT_2-'].update(visible=True)
+            self.main_window['-OPT_MENU_2-'].update(visible=True)
+            self.main_window['-METRIC_TEXT_2-'].update(visible=True)
+            self.main_window['-METRIC_MENU_2-'].update(visible=True)
+            self.main_window['-SAMPLE_TEXT_2-'].update(visible=True)
+            self.main_window['-SAMPLE_2-'].update(visible=True)
+            self.main_window['-NUM_ITER_2_TEXT-'].update(visible=True)
+            self.main_window['-NUM_ITER_2-'].update(visible=True)
 
 
     def clear_global_params(self):
-        self.window['-OPT_TEXT-'].update(visible=False)
-        self.window['-OPT_MENU-'].update(visible=False)
-        self.window['-METRIC_TEXT-'].update(visible=False)
-        self.window['-METRIC_MENU-'].update(visible=False)
-        self.window['-OPT_TEXT_2-'].update(visible=False)
-        self.window['-OPT_MENU_2-'].update(visible=False)
-        self.window['-METRIC_TEXT_2-'].update(visible=False)
-        self.window['-METRIC_MENU_2-'].update(visible=False)
-        self.window['-SAMPLE_TEXT_2-'].update(visible=False)
-        self.window['-SAMPLE_2-'].update(visible=False)
-        self.window['-NUM_ITER_2_TEXT-'].update(visible=False)
-        self.window['-NUM_ITER_2-'].update(visible=False)
+        self.main_window['-OPT_TEXT-'].update(visible=False)
+        self.main_window['-OPT_MENU-'].update(visible=False)
+        self.main_window['-METRIC_TEXT-'].update(visible=False)
+        self.main_window['-METRIC_MENU-'].update(visible=False)
+        self.main_window['-OPT_TEXT_2-'].update(visible=False)
+        self.main_window['-OPT_MENU_2-'].update(visible=False)
+        self.main_window['-METRIC_TEXT_2-'].update(visible=False)
+        self.main_window['-METRIC_MENU_2-'].update(visible=False)
+        self.main_window['-SAMPLE_TEXT_2-'].update(visible=False)
+        self.main_window['-SAMPLE_2-'].update(visible=False)
+        self.main_window['-NUM_ITER_2_TEXT-'].update(visible=False)
+        self.main_window['-NUM_ITER_2-'].update(visible=False)
         for i in range(1,4):
-            self.window[f'-GLOBAL_PARAM_TEXT_{i}-'].update(visible=False)
-            self.window[f'-GLOBAL_PARAM_{i}-'].update(visible=False)
+            self.main_window[f'-GLOBAL_PARAM_TEXT_{i}-'].update(visible=False)
+            self.main_window[f'-GLOBAL_PARAM_{i}-'].update(visible=False)
 
     def clear_all_params(self):
         types = OPTIMIZERS
         self.clear_global_params()
         for t in types:
-            self.window[f'-{t}_PARAM_TEXT_1-'].update(visible=False)
-            self.window[f'-{t}_PARAM_1-'].update(visible=False)
+            self.main_window[f'-{t}_PARAM_TEXT_1-'].update(visible=False)
+            self.main_window[f'-{t}_PARAM_1-'].update(visible=False)
         self.hide_contour_params()
         self.hide_contours_brows()
         self.hide_manual_registration_params()
-        self.window["-TFM_INPUT-"].update(visible=False)
-        self.window["-TFM_UPLOADER-"].update(visible=False)
+        self.main_window["-TFM_INPUT-"].update(visible=False)
+        self.main_window["-TFM_UPLOADER-"].update(visible=False)
 
     def show_relevant_params_input(self):
         print("showing params")
@@ -1034,8 +1108,8 @@ class App():
             self.clear_all_params()
             self.show_global_params()
             for t in types:
-                self.window[f'-{t}_PARAM_TEXT_1-'].update(visible=True)
-                self.window[f'-{t}_PARAM_1-'].update(GLOBAL_PARAM_INIT[2], visible=True)
+                self.main_window[f'-{t}_PARAM_TEXT_1-'].update(visible=True)
+                self.main_window[f'-{t}_PARAM_1-'].update(GLOBAL_PARAM_INIT[2], visible=True)
 
         else:
             self.clear_all_params()
@@ -1064,15 +1138,16 @@ class App():
         self.registration_params['accuracy'] = GLOBAL_PARAM_INIT[2]
 
     def show_assignment_uploader(self):
-        self.window['-ASSIGN_TEXT-'].update(visible=True)
-        self.window['-ASSIGN_INPUT-'].update(visible=True)
-        self.window['-ASSIGN_BROWSER-'].update(visible=True)
+        self.main_window['-ASSIGN_TEXT-'].update(visible=True)
+        self.main_window['-ASSIGN_INPUT-'].update(visible=True)
+        self.main_window['-ASSIGN_BROWSER-'].update(visible=True)
 
     def show_movement_buttons(self):
-        self.window['-SHOW_MOVE-'].update(visible=True)
-        self.window['-SHOW_PAIRS-'].update(visible=True)
-        self.window['-SHOW_PAIRS_INTERACTIVE-'].update(visible=True)
-        self.window['-SAVE-'].update(visible=True)
+        self.main_window['-SHOW_MOVE-'].update(visible=True)
+        self.main_window['-SHOW_PAIRS-'].update(visible=True)
+        self.main_window['-SHOW_PAIRS_INTERACTIVE-'].update(visible=True)
+        self.main_window['-EXCLUDE_WIN-'].update(visible=True)
+        self.main_window['-SAVE-'].update(visible=True)
 
     def use_saved_transformation(self):
         if self.case_name in os.listdir('./registration_output'):
@@ -1096,16 +1171,16 @@ class App():
             self.update_massage(NO_REGISTRATION_ERR)
 
     def show_contour_params(self):
-        self.window['-GET_CONTOURS_TEXT-'].update(visible=True)
-        self.window['-CONTOURS_MENU-'].update(visible=True)
-        self.window['-ICP_THRESH_TEXT-'].update(visible=True)
-        self.window['-ICP_THRESH-'].update(visible=True)
+        self.main_window['-GET_CONTOURS_TEXT-'].update(visible=True)
+        self.main_window['-CONTOURS_MENU-'].update(visible=True)
+        self.main_window['-ICP_THRESH_TEXT-'].update(visible=True)
+        self.main_window['-ICP_THRESH-'].update(visible=True)
 
     def hide_contour_params(self):
-        self.window['-GET_CONTOURS_TEXT-'].update(visible=False)
-        self.window['-CONTOURS_MENU-'].update(visible=False)
-        self.window['-ICP_THRESH_TEXT-'].update(visible=False)
-        self.window['-ICP_THRESH-'].update(visible=False)
+        self.main_window['-GET_CONTOURS_TEXT-'].update(visible=False)
+        self.main_window['-CONTOURS_MENU-'].update(visible=False)
+        self.main_window['-ICP_THRESH_TEXT-'].update(visible=False)
+        self.main_window['-ICP_THRESH-'].update(visible=False)
 
     def get_ctrs_points(self, dict):
         if self.ctrs_source == "Auto Segmentation":

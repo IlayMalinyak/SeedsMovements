@@ -341,16 +341,28 @@ def get_spacing_array(meta):
                   meta['pixelSpacing'][1], meta['sliceThickness']])
     return spacing
 
-def get_contour_domain(ctr1, ctr2):
+def get_contour_domain(ctr1, ctr2, meta, flip_z=True):
     min_1 = np.min(ctr1, axis=1)
     max_1 = np.max(ctr1, axis=1)
     min_2 = np.min(ctr2, axis=1)
     max_2 = np.max(ctr2, axis=1)
     min_tot = np.min(np.vstack((min_1, min_2)), axis=0)
     max_tot = np.max(np.vstack((max_1, max_2)), axis=0)
+    M = np.linalg.inv(pixel_to_mm_transformation_mat(meta))
+    min_tot_px = M @ (np.vstack((min_tot[:,None], np.ones((1,1))))).astype(np.int16)
+    max_tot_px = M @ (np.vstack((max_tot[:,None], np.ones((1,1))))).astype(np.int16)
+    num_slices = meta['numSlices']
+    if flip_z:
+        min_tot_px[3,:] = abs(num_slices - abs(min_tot_px[3,:]))
+        max_tot_px[3, :] = abs(num_slices - abs(max_tot_px[3, :]))
+    else:
+        min_tot_px[3,:] = abs(min_tot_px[3,:])
+        max_tot_px[3,:] = abs(max_tot_px[3,:])
+
+
     # min_tot -= [10, 10, 10]
     # max_tot += [10, 10, 10]
-    return min_tot, max_tot
+    return np.squeeze(min_tot_px[:3],axis=-1), np.squeeze(max_tot_px[:3],axis=-1)
 
 
 def get_manual_domain(origin_px, end_px, meta):
