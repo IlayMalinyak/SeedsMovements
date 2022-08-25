@@ -9,8 +9,10 @@ from glob import glob
 import shutil
 import pandas as pd
 import registration
-from SimpleITK import AffineTransform, GetArrayFromImage, GetImageFromArray
-from scipy.ndimage import binary_dilation
+from SimpleITK import Euler3DTransform, GetArrayFromImage, GetImageFromArray
+from scipy.ndimage import binary_dilation, generate_binary_structure
+from scipy.spatial.transform import Rotation
+import json
 from matplotlib import pyplot as plt
 
 
@@ -188,26 +190,35 @@ def get_seeds_tips(seed_position, seeds_orientation):
     # seeds_tips[:, 2, :] *= -1
     return seeds_tips
 
+def down_sample_array(arr):
+    """
+    uniform down-sampling coordinate
+    :param arr: NX3 numpy array
+    :return: MX3 numpy array where M < 5000
+    """
+    number_digist = int(np.floor(np.log10(arr.shape[0])))
+    step = 2*10**(number_digist - 3) if number_digist > 2 else 1
+    return arr[::step]
 
-def broadcast_points(object, x_spacing, y_spacing, thickness):
+def broadcast_points(object, num_points):
     """
     broadcast number of points in an object from 3 to N = round(10 / ((x_spacing + y_spacing) / 2). this is the maximal
     number of points that a 10 mm length seeds can contain.
-    :param object: usually seed but can be any general object with shape 3x3x1. the first axis represent number of
+    :param object: usually seeds but can be any general object with shape 3x3xN. the first axis represent number of
     points in the object (two tips and center), second axis represent x,y,z and the third axis represent the number of
     objects
     :param x_spacing: pixel spacing x direction
     :param y_spacing: pixel spacing y direction
-    :return: array of 3XN. N is the new number of points
+    :return: array of MX3XN. M is the new number of points
     """
-    seed_num_points = round(10 / ((x_spacing + y_spacing + thickness) / 3))
-    x = np.linspace(object[0, 0, ...], object[2, 0, ...], seed_num_points)
-    y = np.linspace(object[0, 1, ...], object[2, 1, ...], seed_num_points)
-    z = np.linspace(object[0, 2, ...], object[2, 2, ...], seed_num_points)
-    x = np.ones(seed_num_points) * object[0, 0] if x is None else x
-    y = np.ones(seed_num_points) * object[0, 1] if y is None else y
-    z = np.ones(seed_num_points) * object[0, 2] if z is None else z
-    return np.array([x,y,z])
+    num_objects = object.shape[2]
+    x = np.linspace(object[0, 0, ...], object[2, 0, ...], num_points)
+    y = np.linspace(object[0, 1, ...], object[2, 1, ...], num_points)
+    z = np.linspace(object[0, 2, ...], object[2, 2, ...], num_points)
+    x = np.ones((num_points,num_objects)) * object[0, 0] if x is None else x
+    y = np.ones((num_points,num_objects)) * object[0, 1] if y is None else y
+    z = np.ones((num_points,num_objects)) * object[0, 2] if z is None else z
+    return np.concatenate((x[:,None,:],y[:,None,:], z[:,None,:]), axis=1)
 
 
 def read_dicom(path,meta, cloud=False):
@@ -305,7 +316,26 @@ def pixel_to_mm_transformation_mat(meta, z_factor=-1):
     M = np.vstack((np.hstack((m1, m2, m3, m4)), np.array([0, 0, 0, 1])))
     return M
 
+def convert_dcm_to_pixel(dcm_coords, meta):
+    """
+    convert dcm coordinates to pixels
+    :param meta: meta data contains ipp,iop,pixel spacing and slice thickness/spacing
+    :param dcm_coords: nd array of dcm coordinates
+    :return: nd array with shape equal to dcm_coords.shape of pixel coordinated
+    """
+    M = pixel_to_mm_transformation_mat(meta)
+    dicom_cord = np.vstack((dcm_coords, np.ones(dcm_coords.shape[1])))
+    pixel_cord = np.abs(np.linalg.inv(M) @ dicom_cord)
+    # pixel_cord[2,:] = num_slices - pixel_cord[2, :]
+    return pixel_cord[:3]
 
+def get_seeds_tips_pixels(seeds_tips_dcm, meta):
+    s = convert_dcm_to_pixel(seeds_tips_dcm[0], meta)
+    e = convert_dcm_to_pixel(seeds_tips_dcm[-1], meta)
+    m = (s + e) // 2
+    seeds_pixels = np.vstack((s[None,...], m[None,...], e[None,...])).astype(np.int16)
+    # seeds_pixels[:,2,:] = meta['numSlices'] - seeds_pixels[:,2,:]
+    return seeds_pixels
 def get_contour_mask(arr, meta, shape, flip_z=True):
     M = np.linalg.inv(pixel_to_mm_transformation_mat(meta))
     arr = np.vstack((arr, np.ones(arr.shape[1])))
@@ -379,28 +409,53 @@ def get_manual_domain(origin_px, end_px, meta):
     return np.squeeze(origin[:3], -1),np.squeeze(end[:3], -1)
 
 
+def get_all_seeds_pixels(seeds_tips_dcm, meta, shape=None):
+    seeds_tips_px = get_seeds_tips_pixels(seeds_tips_dcm, meta)
+    seeds_tips_px[:, 2, :] = meta['numSlices'] - seeds_tips_px[:, 2, :]
+    seeds_pixels = np.zeros((0, 3)).astype(np.int16)
+    for i in range(seeds_tips_px.shape[-1]):
+        s = seeds_tips_px[:, :, i]
+        num_points = np.max(
+            (np.max(s[:, 0]) - np.min(s[:, 0]), np.max(s[:, 1]) - np.min(s[:, 1]), np.max(s[:, 2]) - np.min(s[:, 2])))
+        s_broad = np.squeeze(broadcast_points(s[..., None], num_points), axis=-1).astype(np.int16)
+        seeds_pixels = np.vstack((seeds_pixels, s_broad))
+        # mask_seeds[s_broad[:, 1], s_broad[:,0], s_broad[:,2]] = 1
+    if shape is not None:
+        mask_seeds = np.zeros(shape)
+        mask_seeds[seeds_pixels[:, 1], seeds_pixels[:, 0], seeds_pixels[:, 2]] = 1
+        structure = generate_binary_structure(3, 3)
+        mask_seeds = binary_dilation(mask_seeds, structure=structure, iterations=3)
+        ones = np.where(mask_seeds)
+        return np.array(ones)
+    return seeds_pixels
+
+
 def wrap_image_with_matrix(fixed_arr, moving_arr, meta, transformation_mat):
     spacing = get_spacing_array(meta)
-    fixed = GetImageFromArray(fixed_arr)
+    fixed = GetImageFromArray(np.transpose(fixed_arr,(2,0,1)))
     # set_meta_data_to_sitk_image(fixed, fixed_meta, 3)
-    moving = GetImageFromArray(moving_arr)
+    moving = GetImageFromArray(np.transpose(moving_arr, (2,0,1)))
     # set_meta_data_to_sitk_image(moving, moving_meta, 3)
     M = pixel_to_mm_transformation_mat(meta)
-    t = transformation_mat[:3,3].flatten()
+    t = transformation_mat[:3,3].flatten() / spacing
+    # t = [0,0,-50]
     # t = np.hstack((t, np.ones(1)))
     # t = np.linalg.inv(M) @ t
     r = transformation_mat[:3,:3]
-    p_z_y = np.array([[1,0,0],[0,0,1],[0,1,0]])
-    p_x_y = np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]])
-    r_zy = p_z_y @ r @ p_z_y
-    r_xy = p_x_y @ r_zy @ p_x_y
-    # t[0],t[1], t[2] = t[2], t[0], t[1]
-    tfm = AffineTransform(3)
-    tfm.SetMatrix(r.flatten())
+    rot = Rotation.from_matrix(r).as_euler('xyz')
+    print(rot)
+    # r = np.eye(3)
+    # p_z_y = np.array([[1,0,0],[0,0,1],[0,1,0]])
+    # p_x_y = np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]])
+    # r_zy = p_z_y @ r @ p_z_y
+    # r_xy = p_x_y @ r_zy @ p_x_y
+    # # t[0],t[1], t[2] = t[2], t[0], t[1]
+    tfm = Euler3DTransform()
+    tfm.SetRotation(rot[0],rot[1],rot[2])
     tfm.SetTranslation(t)
     print(tfm)
     warped = registration.warp_image_sitk(fixed, moving, tfm)
-    warped_arr = GetArrayFromImage(warped)
+    warped_arr = np.transpose(GetArrayFromImage(warped),(1,2,0))
     print("fixed arr ", fixed_arr.shape, " fixed sitk", fixed.GetSize(), " warped ", warped_arr.shape)
     return warped_arr
 
@@ -449,6 +504,22 @@ def set_meta_data_to_sitk_image(img, meta, dim=4):
     # iop = tuple(iop)
     img.SetOrigin(ipp)
     img.SetDirection(iop)
+
+
+def log_to_dict(path):
+    log_data = open(path, 'r')
+    result = {}
+    for line in log_data:
+        # print(line)
+        columns = line.split(', ')[2:]
+        for c in columns:
+            # print(c.split(': '))
+            key = c.split(':')[0]
+            if key not in result.keys():
+                result[key] = []
+            value = c.split(':')[1]
+            result[key].append(float(value))
+    return result
 
 
 

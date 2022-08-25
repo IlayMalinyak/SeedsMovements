@@ -113,10 +113,16 @@ def apply_transformation_on_seeds(transform, seeds, type='sitk'):
 
 
 def apply_scipy_transformation_on_seeds(transform, seeds):
-    starts = transform.apply(seeds[0,...].T).T[None,...]
-    ends = transform.apply(seeds[2,...].T).T[None,...]
-    middles = ((starts + ends)/2)
-    return np.vstack((starts,middles,ends))
+    s = transform.apply(seeds[0, :].T).T
+    e = transform.apply(seeds[2, :].T).T
+    m = (s + e) / 2
+    return np.vstack((s[None, ...], m[None, ...], e[None, ...]))
+
+def apply_probreg_transformation_on_seeds(trans, seeds):
+    s = trans.transform(seeds[0, :].T).T
+    e = trans.transform(seeds[2, :].T).T
+    m = (s + e) / 2
+    return np.vstack((s[None, ...], m[None, ...], e[None, ...]))
 
 
 def apply_sitk_transformation_on_struct(tfm, struct):

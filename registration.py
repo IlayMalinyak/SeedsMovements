@@ -9,12 +9,30 @@ from matplotlib import pyplot as plt
 import matplotlib.patches as mpatches
 import open3d as o3d
 from scipy.spatial import ConvexHull
-from analyze import apply_transformation
-import tensorflow as tf
+from analyze import apply_transformation, calc_rmse
+# import tensorflow as tf
 import DeepReg.deepreg.model.loss.image as image_loss
 import DeepReg.deepreg.model.layer_util as layer_util
+from tests import display_axial
+from probreg import cpd, bcpd, callbacks
 
 
+class Callback:
+    def __init__(self, source, target):
+        self.source = source
+        self.target = target
+        self.result = None
+        self.rmse = []
+        self.i = 0
+
+    def __call__(self, transformation):
+        self.result = transformation.transform(self.source)
+        print("iteration ", self.i)
+        self.i += 1
+        # self.rmse.append(calc_rmse(self.result.T, self.target.T, 1))
+
+    def get_rmse(self):
+        return self.rmse
 
 
 class ContourRegistration:
@@ -25,9 +43,14 @@ class ContourRegistration:
         self.correspondence_set = None
         # self.best_correspondence_set = None
         self.registration = None
+        self.trans_init = None
         # self.best_registration = None
+        self.callback = None
         self.rmse = None
         # self.best_rmse = None
+
+    def get_callback_obj(self):
+        return self.callback
 
     @staticmethod
     def preprocess_point_cloud(pcd, voxel_size):
@@ -84,30 +107,13 @@ class ContourRegistration:
         :param dist_thresh: distance threshold, float
         :return: reg_p2p - open3d registration result object, fixed_surface - np array, moving surface - np array
         """
-        fixed_surface, moving_surface, dist = self.prepare_points(p1, p2)
+        fixed_surface, moving_surface, dist = self.prepare_points(p1, p2, surface=False)
         dist_thresh = dist if dist_thresh is None else dist_thresh
         # print("distant between centers ", dist_thresh)
         # print("**** initial fast global registration *****")
         fgr = self.fast_global_registration(fixed_surface, moving_surface,dist_thresh)
 
         wrapped_fixed_surface = apply_transformation(fixed_surface, fgr.transformation)
-
-        # icp(fixed_ctr.T, moving_ctr.T)
-
-        # fig = plt.figure()
-        # ax = fig.add_subplot(projection='3d')
-        # ax.scatter(fixed_surface[:, 0], fixed_surface[:, 1], fixed_surface[:, 2], alpha=.6, color='b',
-        #            label='original source')
-        # ax.scatter(wrapped_fixed_surface[:, 0], wrapped_fixed_surface[:, 1], wrapped_fixed_surface[:, 2], alpha=.6,
-        #            color='g', label='wrapped source')
-        # # ax.scatter(moving_ctr[:,0], moving_ctr[:,1], moving_ctr[:,2], alpha=.5, color='r')
-        # ax.scatter(moving_surface[:, 0], moving_surface[:, 1], moving_surface[:, 2], alpha=.6, color='orange',
-        #            label='target')
-        # plt.title('fgr')
-        # plt.legend()
-        # plt.show()
-        # self.correspondence_set = np.array(fgr.correspondence_set)
-        # print("correspondence set " ,self.correspondence_set)
         trans_init = fgr.transformation
         pcd1 = o3d.t.geometry.PointCloud()
         pcd1.point['positions'] = o3d.core.Tensor(fixed_surface)
@@ -121,10 +127,39 @@ class ContourRegistration:
         self.correspondence_set = (reg_p2p.correspondences_).numpy()
         try:
             self.registration = reg_p2p
+            self.trans_init = fgr
             self.rmse = self.registration.loss_log['inlier_rmse'].numpy()
-            return reg_p2p, fixed_surface, moving_surface
+            return reg_p2p, fgr, fixed_surface, moving_surface
         except Exception:
-            return None, fixed_surface, moving_surface
+            return None, None, fixed_surface, moving_surface
+
+    def cpd(self, p1, p2, max_iter=50, type='rigid', callback=[]):
+        fixed_surface, moving_surface, dist = self.prepare_points(p1, p2, surface=False)
+        self.callback = Callback(fixed_surface, moving_surface) if len(callback) == 0 else callback
+        # pcd = o3d.geometry.PointCloud()
+        # pcd.points = o3d.utility.Vector3dVector(fixed_surface)
+        # pcd2 = o3d.geometry.PointCloud()
+        # pcd2.points = o3d.utility.Vector3dVector(moving_surface)
+        # if len(callback) == 0:
+        #     callback = [callbacks.Open3dVisualizerCallback(pcd, pcd2)]
+        tf_param, _, _ = cpd.registration_cpd(fixed_surface, moving_surface, tf_type_name=type, callbacks=[self.callback],
+                                              maxiter=max_iter, tol=1e-6)
+        fixed_surface = tf_param.transform(fixed_surface)
+        # p1 = tf_param.transform(p1)
+        return tf_param, fixed_surface, moving_surface
+
+    def bcpd(self, p1, p2, callback=[]):
+        fixed_surface, moving_surface, dist = self.prepare_points(p1, p2, surface=False)
+        # pcd = o3d.geometry.PointCloud()
+        # pcd.points = o3d.utility.Vector3dVector(fixed_surface)
+        # pcd2 = o3d.geometry.PointCloud()
+        # pcd2.points = o3d.utility.Vector3dVector(moving_surface)
+        # if len(callback) == 0:
+        #     callback = [callbacks.Open3dVisualizerCallback(pcd, pcd2)]
+        tf_param = bcpd.registration_bcpd(fixed_surface, moving_surface, w=0.5, callbacks=callback)
+        fixed_surface = tf_param.transform(fixed_surface)
+        return tf_param, fixed_surface, moving_surface
+
 
     # def update_params(self):
     #     self.best_correspondence_set = self.correspondence_set
@@ -136,27 +171,31 @@ class ContourRegistration:
         return self.correspondence_set
 
     def get_params(self):
-        return self.rmse, self.registration
+        return self.rmse, self.registration, self.trans_init
 
 
     @staticmethod
-    def prepare_points(fixed_points_raw, moving_points_raw):
+    def prepare_points(fixed_points_raw, moving_points_raw, surface=True):
         """
         prepare points for open3d registrations. point cloud is filtered to only surface points (using convex envelope)
         :param fixed_points_raw: np array (N,3)
         :param moving_points_raw: np array (N,3)
         :return: fixed_surface = np array (N,3), moving_surface - np.array (N,3), center_dist - distance between centers
         """
-        fixed_hull = ConvexHull(fixed_points_raw).simplices
-        moving_hull = ConvexHull(moving_points_raw).simplices
-        fixed_surface = []
-        moving_surface = []
-        for p in fixed_hull:
-            fixed_surface.append([fixed_points_raw[p[0], 0], fixed_points_raw[p[1], 1], fixed_points_raw[p[2], 2]])
-        for p in moving_hull:
-            moving_surface.append([moving_points_raw[p[0], 0], moving_points_raw[p[1], 1], moving_points_raw[p[2], 2]])
-        fixed_surface = np.array(fixed_surface)
-        moving_surface = np.array(moving_surface)
+        if surface:
+            fixed_hull = ConvexHull(fixed_points_raw).simplices
+            moving_hull = ConvexHull(moving_points_raw).simplices
+            fixed_surface = []
+            moving_surface = []
+            for p in fixed_hull:
+                fixed_surface.append([fixed_points_raw[p[0], 0], fixed_points_raw[p[1], 1], fixed_points_raw[p[2], 2]])
+            for p in moving_hull:
+                moving_surface.append([moving_points_raw[p[0], 0], moving_points_raw[p[1], 1], moving_points_raw[p[2], 2]])
+            fixed_surface = np.array(fixed_surface)
+            moving_surface = np.array(moving_surface)
+        else:
+            fixed_surface = fixed_points_raw
+            moving_surface = moving_points_raw
         center_fixed = np.mean(fixed_surface, axis=0)
         center_moving = np.mean(moving_surface, axis=0)
         center_dist = np.sqrt(np.sum((center_fixed - center_moving) ** 2))
@@ -183,7 +222,8 @@ def read_image(dir):
     return image
 
 
-def register_sitk(fixed_path, moving_path, meta, out_path, type="Bspline", params={}, domain_start=None, domain_end=None):
+def register_sitk(fixed_path, moving_path, meta, out_path, type="Bspline", params={}, domain_start=None, domain_end=None,
+                  exclude_arr=None):
     """
     register two dicoms
     :param fixed_path: path to fixed dicom
@@ -217,7 +257,7 @@ def register_sitk(fixed_path, moving_path, meta, out_path, type="Bspline", param
     # print("origin before registration ", fixed_reduced.GetOrigin(), moving.GetOrigin())
     # print("size before registration ", fixed_reduced.GetSize())
     if type == "Bspline":
-        outTx = bspline_registration(fixed, moving, out_path, params, domain_start, domain_end)
+        outTx = bspline_registration(fixed, moving, out_path, params, domain_start, domain_end, exclude_arr)
     elif type == "Affine":
         outTx = affine_registration(fixed, moving, out_path, params)
     else:
@@ -283,7 +323,7 @@ def inverse_bspline(outX):
 
 
 
-def bspline_registration(fixed_image, moving_image, out_path, params, domain_start, domain_end):
+def bspline_registration(fixed_image, moving_image, out_path, params, domain_start, domain_end, exclude_arr):
     """
     bspline deformable registration
     :param fixed_image: sitk.Image fixe image
@@ -296,11 +336,11 @@ def bspline_registration(fixed_image, moving_image, out_path, params, domain_sta
     registration_method = sitk.ImageRegistrationMethod()
 
     # origin = fixed_image.GetOrigin()
-    if domain_start is not None and domain_end is not None:
-        reduced = fixed_image[domain_start[1]:domain_end[1], domain_start[0]:domain_end[0], domain_start[2]:domain_end[2]]
-        print("reduced size = ", reduced.GetSize())
-    else:
-        reduced = fixed_image
+    # if domain_start is not None and domain_end is not None:
+    #     reduced = fixed_image[domain_start[1]:domain_end[1], domain_start[0]:domain_end[0], domain_start[2]:domain_end[2]]
+    #     print("reduced size = ", reduced.GetSize())
+    # else:
+    #     reduced = fixed_image
 
     # Determine the number of BSpline control points using the physical
     # spacing we want for the finest resolution control grid.
@@ -312,7 +352,7 @@ def bspline_registration(fixed_image, moving_image, out_path, params, domain_sta
     # the multi-resolution framework.
     mesh_size = [int(sz/4 + 0.5) for sz in mesh_size]
 
-    initial_transform = sitk.BSplineTransformInitializer(image1=reduced,
+    initial_transform = sitk.BSplineTransformInitializer(image1=fixed_image,
                                                          transformDomainMeshSize=mesh_size, order=3)
     # initial_transform.SetTransformDomainOrigin([-273, -208, 660])
     print("transform origin ", initial_transform.GetTransformDomainOrigin())
@@ -329,6 +369,35 @@ def bspline_registration(fixed_image, moving_image, out_path, params, domain_sta
     registration_method.SetInterpolator(sitk.sitkBSpline)
 
     registration_method.SetMetricSamplingStrategy(registration_method.RANDOM)
+        # binary_filter = sitk.BinaryThresholdImageFilter()
+        # binary_filter.SetUpperThreshold(0.5)
+    fixed_mask = sitk.Image(fixed_image.GetSize(), 1)
+    fixed_mask.SetSpacing(fixed_image.GetSpacing())
+    fixed_mask.SetOrigin(fixed_image.GetOrigin())
+    fixed_mask.SetDirection(fixed_image.GetDirection())
+    domain_start = [0,0,0] if domain_start is None else domain_start
+    domain_end = [s - 1 for s in fixed_image.GetSize()] if domain_end is None else domain_end
+    # if domain_start is not None and domain_end is not None:
+    fixed_mask[domain_start[1]:domain_end[1], domain_start[0]:domain_end[0], domain_start[2]:domain_end[2]] = 1
+    # else:
+    #     size = fixed_image.GetSize()
+    #     print("size ", size)
+    #     fixed_mask[0:size[0], 0:size[1], 0:size[2]] = 1
+    ones1 = len(np.where(np.transpose(sitk.GetArrayFromImage(fixed_mask), (1, 2, 0)))[0])
+    if exclude_arr is not None:
+        print("number of exclude points ", exclude_arr.shape[-1])
+        for i in range(exclude_arr.shape[-1]):
+            # if (i % 1000) == 0:
+                # print(int(exclude_arr[1,i]), int(exclude_arr[0,i]), int(exclude_arr[2,i]))
+            # print("excluding: ", fixed_mask[int(exclude_arr[1,i]), int(exclude_arr[0,i]), int(exclude_arr[2,i])])
+            fixed_mask[int(exclude_arr[1,i]), int(exclude_arr[0,i]), int(exclude_arr[2,i])] = 0
+    print("reduced on whites ", ones1 - len(np.where(np.transpose(sitk.GetArrayFromImage(fixed_mask), (1, 2, 0)))[0]))
+    registration_method.SetMetricFixedMask(fixed_mask)
+    # display_axial(np.transpose(sitk.GetArrayFromImage(fixed_mask), (1, 2, 0)))
+        # registration_method.SetMetricMovingMask(fixed_mask)
+
+
+
         # fixed_mask = sitk.Cast(sitk.GetImageFromArray(np.transpose(fixed_mask),(2,0,1)),sitk.sitkFloat32)
     registration_method.SetShrinkFactorsPerLevel(shrinkFactors=[4, 2, 1])
     registration_method.SetSmoothingSigmasPerLevel(smoothingSigmas=[2, 1, 0])
@@ -337,7 +406,7 @@ def bspline_registration(fixed_image, moving_image, out_path, params, domain_sta
     registration_method.AddCommand(sitk.sitkIterationEvent, lambda: command_iteration(registration_method))
     plot_metric(registration_method)
 
-    final_transformation = registration_method.Execute(reduced, moving_image)
+    final_transformation = registration_method.Execute(fixed_image, moving_image)
     exceute_metric_plot(registration_method, out_path, "Bspline")
     print('\nOptimizer\'s stopping condition, {0}'.format(registration_method.GetOptimizerStopConditionDescription()))
     return final_transformation
@@ -453,34 +522,34 @@ def plot_metric(registration_method):
     registration_method.AddCommand(sitk.sitkMultiResolutionIterationEvent, rgui.update_multires_iterations)
     registration_method.AddCommand(sitk.sitkIterationEvent, lambda: rgui.plot_values(registration_method))
 
-@tf.function
-def train_step_CT(grid, weights, optimizer, mov, fix, image_loss_name):
-    """
-    Train step function for backprop using gradient tape.
-    GradientTape is a tensorflow API which automatically
-    differentiates and facilitates the implementation of machine
-    learning algorithms: https://www.tensorflow.org/guide/autodiff.
-
-    :param grid: reference grid return from util.get_reference_grid
-    :param weights: trainable affine parameters [1, 4, 3]
-    :param optimizer: tf.optimizers: choice of optimizer
-    :param mov: moving image, tensor shape [1, m_dim1, m_dim2, m_dim3]
-    :param fix: fixed image, tensor shape[1, f_dim1, f_dim2, f_dim3]
-    :return loss: image dissimilarity to minimise
-    """
-
-    # We initialise an instance of gradient tape to track operations
-    with tf.GradientTape() as tape:
-        pred = layer_util.resample(vol=mov, loc=layer_util.warp_grid(grid, weights))
-        # Calculate the loss function between the fixed image
-        # and the moving image
-        loss = image_loss.dissimilarity_fn(
-            y_true=fix, y_pred=pred, name=image_loss_name
-        )
-    gradients = tape.gradient(loss, [weights])
-    # Applying the gradients
-    optimizer.apply_gradients(zip(gradients, [weights]))
-    return loss
+# @tf.function
+# def train_step_CT(grid, weights, optimizer, mov, fix, image_loss_name):
+#     """
+#     Train step function for backprop using gradient tape.
+#     GradientTape is a tensorflow API which automatically
+#     differentiates and facilitates the implementation of machine
+#     learning algorithms: https://www.tensorflow.org/guide/autodiff.
+#
+#     :param grid: reference grid return from util.get_reference_grid
+#     :param weights: trainable affine parameters [1, 4, 3]
+#     :param optimizer: tf.optimizers: choice of optimizer
+#     :param mov: moving image, tensor shape [1, m_dim1, m_dim2, m_dim3]
+#     :param fix: fixed image, tensor shape[1, f_dim1, f_dim2, f_dim3]
+#     :return loss: image dissimilarity to minimise
+#     """
+#
+#     # We initialise an instance of gradient tape to track operations
+#     with tf.GradientTape() as tape:
+#         pred = layer_util.resample(vol=mov, loc=layer_util.warp_grid(grid, weights))
+#         # Calculate the loss function between the fixed image
+#         # and the moving image
+#         loss = image_loss.dissimilarity_fn(
+#             y_true=fix, y_pred=pred, name=image_loss_name
+#         )
+#     gradients = tape.gradient(loss, [weights])
+#     # Applying the gradients
+#     optimizer.apply_gradients(zip(gradients, [weights]))
+#     return loss
 
 
 # def register_self_affine(fixed_path, moving_path, learning_rate, total_iter, image_loss_name):

@@ -492,7 +492,7 @@ def plot_seeds(seeds_tips, ax: object = None, title: object = None, color: objec
     return ax
 
 
-def overlay_contours(ctr1, ctr2, path, save=True):
+def overlay_contours(ctr1, ctr2, path, save=True, alpha=0.01):
     """
     plot 2 contours together
     :param ctr1: np array (N,3) of physical coordinates
@@ -503,8 +503,8 @@ def overlay_contours(ctr1, ctr2, path, save=True):
     plt.close("all")
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
-    ax.scatter(ctr1[:,0], ctr1[:,1], ctr1[:,2], alpha=0.01, label='1')
-    ax.scatter(ctr2[:,0], ctr2[:,1], ctr2[:,2], alpha=0.01, color='lime',label='2')
+    ax.scatter(ctr1[:,0], ctr1[:,1], ctr1[:,2], alpha=alpha, label='1')
+    ax.scatter(ctr2[:,0], ctr2[:,1], ctr2[:,2], alpha=alpha, color='lime',label='2')
     ax.set_xlabel("X")
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
@@ -526,8 +526,8 @@ def overlay_contours_interactive(ctrs1, ctrs2):
     :param ctr1: np array (N,3) of physical coordinates
     :param ctr2: np array (N,3) of physical coordinates
     """
-    trace1 = go.Scatter3d(x=ctrs1[:, 0],y=ctrs1[:, 1],z=ctrs1[:, 2],name="fixed", opacity=0.005)
-    trace2 = go.Scatter3d(x=ctrs2[:, 0],y=ctrs2[:, 1],z=ctrs2[:, 2],name='moving', opacity=0.005)
+    trace1 = go.Scatter3d(x=ctrs1[:, 0],y=ctrs1[:, 1],z=ctrs1[:, 2],name="fixed", mode='markers', opacity=0.1)
+    trace2 = go.Scatter3d(x=ctrs2[:, 0],y=ctrs2[:, 1],z=ctrs2[:, 2],name='moving', mode='markers', opacity=0.1)
     fig = go.Figure()
     fig.add_trace(trace1)
     fig.add_trace(trace2)
@@ -573,7 +573,7 @@ def plot_rmse(rmse, path, save=True):
     plt.close()
 
 
-def plot_rmse_and_contours(rmse, ctr1, ctr2, path, save=True):
+def plot_rmse_and_contours(rmse, ctr1, ctr2, path, alpha=0.1, save=True):
     """
     plot rmse and contour overlay in the same plot
     :param rmse: array of rmse
@@ -586,13 +586,13 @@ def plot_rmse_and_contours(rmse, ctr1, ctr2, path, save=True):
     fig = plt.figure(figsize=plt.figaspect(0.66))
     ax = fig.add_subplot(1, 2, 1)
     ax.plot(np.arange(len(rmse)), rmse)
-    ax.set_title("ICP convergence")
+    ax.set_title("Registration convergence plot")
     ax.set_xlabel("iteration")
-    ax.set_ylabel("Inliers Root Mean Squared Error (mm)")
+    ax.set_ylabel("metric")
     # Second subplot
     ax = fig.add_subplot(1, 2, 2, projection='3d')
-    ax.scatter(ctr1[:, 0], ctr1[:, 1], ctr1[:, 2], alpha=0.1, label='fixed', color='gray')
-    ax.scatter(ctr2[:, 0], ctr2[:, 1], ctr2[:, 2], alpha=0.1, color='red', label='moving')
+    ax.scatter(ctr1[:, 0], ctr1[:, 1], ctr1[:, 2], alpha=alpha, label='fixed', color='gray')
+    ax.scatter(ctr2[:, 0], ctr2[:, 1], ctr2[:, 2], alpha=alpha, color='red', label='moving')
     ax.set_title("Contours Overlay")
     if save:
         plt.savefig(path)

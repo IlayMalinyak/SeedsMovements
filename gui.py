@@ -98,7 +98,7 @@ class App():
             [sg.VPush()],
             [sg.Text('Registration', font=font_header)],
             [sg.Text("Registration Type", font=font_text), sg.Combo(['Use saved Registration', 'Affine', 'Bspline', "Affine+Bspline",
-                                                                     "ICP"], enable_events=True, font=font_text, key="-REG_MENU-")],
+                                                                     "ICP", "CPD"], enable_events=True, font=font_text, key="-REG_MENU-")],
             [sg.Text('Optimizer', key='-OPT_TEXT-', visible=False),
              sg.Combo(['LBFGS2', 'Gradient Decent'], key='-OPT_MENU-', visible=False, enable_events=True),
              sg.Text('Metric', key='-METRIC_TEXT-', visible=False),
@@ -231,7 +231,9 @@ class App():
         self.fixed_ctrs_path = None
         self.moving_ctrs_path = None
         self.fixed_ctrs_points = None
+        self.fixed_ctrs_points_down = None
         self.moving_ctrs_points = None
+        self.moving_ctrs_points_down = None
         # self.warped_ctrs_points = None
         self.masked_fixed_struct = None
         self.masked_moving_struct = None
@@ -327,7 +329,7 @@ class App():
                 self.exclude_win.close()
                 print("closing window")
                 break
-            elif event == sg.WIN_CLOSED:  # Window close button event
+            if event == sg.WIN_CLOSED:  # Window close button event
                 break
 
     def update_massage(self, massage):
@@ -341,7 +343,9 @@ class App():
     def run(self):
         while True:
             event, values = self.main_window.read()
-            print(event)
+            if event == sg.WIN_CLOSED:  # Window close button event
+                self.update_massage("Bye")
+                break
             if event == "-NAME-":
                 self.case_name = values[event].lower()
                 self.registration_plot_path = f'./registration_output/{self.case_name}/registration_res.png'
@@ -433,7 +437,7 @@ class App():
                     self.message = "Generating interactive plot to analyze manual transformation.\n"\
                                     "When done, close the interactive window and fill the desired values"
                     self.update_massage(self.message)
-                    overlay_contours_interactive(self.fixed_ctrs_points, self.moving_ctrs_points)
+                    overlay_contours_interactive(self.fixed_ctrs_points_down, self.moving_ctrs_points_down)
             if "ROT" in event:
                 plane = event[1:3]
                 try:
@@ -659,21 +663,27 @@ class App():
         if self.registration_type is not None:
             if self.fixed_array is not None and self.moving_array is not None:
                 if self.case_name is not None:
-                    domain = True if self.domain is not None else False
+                    # domain = True if self.domain is not None else False
                     self.message = "Registering...\nThis may take a while"
                     self.update_massage(self.message)
                     self.main_window.refresh()
                     if self.registration_type == "Bspline" or self.registration_type == "Affine":
-                        self.run_sitk_registration(self.registration_type, domain=domain)
+                        seeds_pix = None if self.registration_type == "Affine" else get_all_seeds_pixels(self.seeds_tips_fixed,
+                                                                             self.fixed_dict['meta'],
+                                                                             self.fixed_array.shape)
+                        self.run_sitk_registration(self.registration_type, domain=self.domain, exclude=seeds_pix)
                     elif self.registration_type == "Affine+Bspline":
                         self.run_composite_sitk_registration(["Affine", "Bspline"])
                     elif self.registration_type =='ICP':
                         self.run_adaptive_icp()
                         self.tfm = self.tfm if self.tfm is not None else np.eye(4)
                         # self.moving_array = wrap_image_with_matrix(self.fixed_array, self.moving_array,
-                        #                                            self.meta, np.linalg.inv(self.tfm))
-                        # # self.warped_array = affine_transform(self.warped_array, self.tfm)
+                        #                                            self.meta, np.linalg.inv(self.inv_tfm))
+                        # self.warped_array = affine_transform(self.warped_array, self.tfm)
                         # self.update_arrays("icp")
+                    elif self.registration_type == "CPD":
+                        self.run_probreg_registration()
+
                     elif self.registration_type =='manual':
                         self.tfm = self.run_manual_registration()
                         # self.moving_array = wrap_image_with_matrix(self.fixed_array, self.moving_array,
@@ -705,8 +715,28 @@ class App():
             self.update_massage("No Registration to run")
         return
 
+    def run_probreg_registration(self):
+        reg_obj = registration.ContourRegistration(f'registration_output/{self.case_name}', self.case_name)
+        if self.registration_type == 'CPD':
+            s = time.time()
+            self.tfm, self.fixed_ctrs_points_down, self.moving_ctrs_points_down = reg_obj.cpd(self.fixed_ctrs_points_down,
+                                                                                    self.moving_ctrs_points_down)
+            print("finished cpd")
+            self.fixed_ctrs_points = self.tfm.transform(self.fixed_ctrs_points)
+            self.seeds_tips_fixed = apply_probreg_transformation_on_seeds(self.tfm, self.seeds_tips_fixed)
+            print("finished transforming seeds")
+            # rmse_arr = reg_obj.get_callback_obj().get_rmse()
+            criteria = log_to_dict('Logs/probreg.log')['Criteria']
+            plot_rmse_and_contours(criteria, self.fixed_ctrs_points_down, self.moving_ctrs_points_down,
+                                   self.registration_plot_path)
+            print("calculating rmse")
+            self.rmse.append(calc_rmse(self.fixed_ctrs_points_down.T, self.moving_ctrs_points_down.T, 0.1))
+            print("time to transform ", time.time() - s)
+
     def run_saved_registration(self):
         print("running saved registration")
+        print(self.tfm)
+        print(self.fixed_sitk.GetOrigin(),self.moving_sitk.GetOrigin())
         self.moving_sitk = warp_image_sitk(self.fixed_sitk, self.moving_sitk, self.tfm)
         reg_type = self.registration_type.split("_")[-1]
         if reg_type == 'Bspline' or reg_type == "Affine" or reg_type == "affine+bspline":
@@ -734,12 +764,13 @@ class App():
         tmp_opt, tmp_metric, tmp_smp = self.registration_params["optimizer"], self.registration_params["metric"],\
         self.registration_params['sampling_percentage']
         for i in range(len(types)):
-            domain = False if i == 0 else True
-            self.run_sitk_registration(types[i], apply=False, domain=domain)
+            seeds_pix = None if i == 0 else get_all_seeds_pixels(self.seeds_tips_fixed, self.fixed_dict['meta'],
+                                                                self.fixed_array.shape)
+            self.run_sitk_registration(types[i], apply=False, domain=self.domain, exclude=seeds_pix)
             print("transform type ", self.tfm.GetTransformEnum())
             if self.tfm.GetTransformEnum() == 13:
                 try:
-                    self.composite_tfm.AddTransform(sitk.CompositeTransform(self.inv_tfm).GetNthTransform(0))
+                    self.composite_tfm.AddTransform(sitk.CompositeTransform(self.tfm).GetNthTransform(0))
                 except Exception as e:
                     print(e)
                     self.composite_tfm.AddTransform(self.tfm)
@@ -761,10 +792,10 @@ class App():
         self.rmse.append(calc_rmse(self.fixed_ctrs_points.T, self.moving_ctrs_points.T, 0.001))
         self.param_stack.append({"RMSE": self.rmse[-1]})
 
-    def run_sitk_registration(self, type, apply=True, domain=False):
+    def run_sitk_registration(self, type, apply=True, domain=None, exclude=None):
         print(self.registration_type)
         print(self.registration_params['optimizer'], self.registration_params['metric'], self.registration_params['iterations'])
-        if domain:
+        if domain is not None:
             y0,x0,y1,x1 = self.fixed_viewer.get_rect()
             self.domain[0][:2] = [int(y0),int(x0)]
             self.domain[1][:2] = [int(y1),int(x1)]
@@ -775,11 +806,11 @@ class App():
         if len(self.reg_stack) == 0 or all(np.array(self.reg_stack) == 'ICP'):
             self.fixed_sitk, self.moving_sitk, self.tfm, self.inv_tfm, self.disp_img = register_sitk(
                 self.fixed_dict['CT'], self.moving_dict['CT'], self.fixed_dict['meta'], self.registration_plot_path,
-                type, self.registration_params, dom1, dom2)
+                type, self.registration_params, dom1, dom2, exclude)
         else:
             self.fixed_sitk, self.moving_sitk, self.tfm, self.inv_tfm, self.disp_img = register_sitk(
                 self.fixed_sitk, self.moving_sitk, self.moving_dict['meta'], self.registration_plot_path,
-                type, self.registration_params, dom1, dom2)
+                type, self.registration_params, dom1, dom2, exclude)
         if apply:
             self.seeds_tips_fixed = apply_transformation_on_seeds(self.tfm,
                                                                        self.seeds_tips_fixed,
@@ -836,19 +867,19 @@ class App():
         thresh = self.icp_thresh/100 if self.icp_thresh is not None else 0.9
         min_rmse = [np.inf]
         best_reg = None
+        best_init = None
         best_ratio = 0
         i = 0
         while True:
-            res, fixed_surface, moving_surface = reg_obj.icp(self.fixed_ctrs_points, self.moving_ctrs_points,
+            res,init, fixed_surface, moving_surface = reg_obj.icp(self.fixed_ctrs_points_down, self.moving_ctrs_points_down,
                                                              dist_thresh)
-
             num_pairs = reg_obj.get_correspondence().shape[0]
-            num_points = max(fixed_surface.shape[0], moving_surface.shape[0])
+            num_points = min(fixed_surface.shape[0], moving_surface.shape[0])
             rmse = res.inlier_rmse if res is not None else np.inf
             self.update_massage(f"correspondence set - {num_pairs}, num points - {num_points}, "
                                 f"inlier rmse - {rmse}")
             if rmse < min_rmse[-1] and num_pairs > num_points * thresh:
-                min_rmse, best_reg = reg_obj.get_params()
+                min_rmse, best_reg, best_init = reg_obj.get_params()
                 best_ratio = num_pairs/num_points
             if dist_thresh >= max_dist:
                 break
@@ -861,8 +892,11 @@ class App():
             self.tfm = best_reg.transformation.numpy()
             self.inv_tfm = np.linalg.inv(self.tfm)
             self.fixed_ctrs_points = apply_transformation(self.fixed_ctrs_points, self.tfm)
+            self.fixed_ctrs_points_down = down_sample_array(self.fixed_ctrs_points)
             self.seeds_tips_fixed = apply_transformation_on_seeds(self.tfm, self.seeds_tips_fixed,
                                                                    "affine")
+            print("init ", best_init.transformation)
+            print("icp ", self.tfm)
             # self.warped_struct = get_contour_mask(self.warped_ctrs_points.T, self.meta, self.fixed_array.shape)
             # self.masked_warped_struct = np.ma.masked_where(self.warped_struct == 0, self.warped_struct)
             # self.set_moving_mask() # TODO fix
@@ -928,6 +962,7 @@ class App():
         if 'RTSTRUCT' in self.moving_dict.keys():
             self.moving_ctrs_points = read_structure(self.moving_dict['RTSTRUCT'])[0][1].T
             self.moving_ctrs_points_orig = self.moving_ctrs_points.copy()
+            self.moving_ctrs_points_down = down_sample_array(self.moving_ctrs_points)
             # self.warped_ctrs_points = self.moving_ctrs_points.copy()
             try:
                 self.moving_struct = get_contour_mask(self.moving_ctrs_points.T, self.moving_dict['meta'], self.moving_array.shape)
@@ -972,6 +1007,7 @@ class App():
         if 'RTSTRUCT' in self.fixed_dict.keys():
             self.fixed_ctrs_points = read_structure(self.fixed_dict['RTSTRUCT'])[0][1].T
             self.fixed_ctrs_points_orig = self.fixed_ctrs_points.copy()
+            self.fixed_ctrs_points_down = down_sample_array(self.fixed_ctrs_points)
             try:
                 # struct = read_structure(self.fixed_dict['RTSTRUCT'])
                 self.fixed_struct = get_contour_mask(self.fixed_ctrs_points.T, self.fixed_dict['meta'], self.fixed_array.shape)
@@ -999,6 +1035,7 @@ class App():
         # self.moving_ctrs_points = self.moving_ctrs_points_orig
         self.seeds_tips_fixed = self.seeds_tips_fixed_orig
         self.fixed_ctrs_points = self.fixed_ctrs_points_orig
+        self.fixed_ctrs_points_down = down_sample_array(self.fixed_ctrs_points)
         self.rmse = [None]
         self.domain = None
         # self.update_arrays("affine")
