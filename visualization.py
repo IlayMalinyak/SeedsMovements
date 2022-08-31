@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 from abc import ABC, abstractmethod
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.patches import Rectangle
+from matplotlib.gridspec import GridSpec
 
 
 
@@ -492,7 +493,7 @@ def plot_seeds(seeds_tips, ax: object = None, title: object = None, color: objec
     return ax
 
 
-def overlay_contours(ctr1, ctr2, path, save=True, alpha=0.01):
+def overlay_contours(ctr1, ctr2, path, title = '', save=True, alpha=0.01):
     """
     plot 2 contours together
     :param ctr1: np array (N,3) of physical coordinates
@@ -508,7 +509,7 @@ def overlay_contours(ctr1, ctr2, path, save=True, alpha=0.01):
     ax.set_xlabel("X")
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
-    ax.set_title("contours overlay")
+    ax.set_title(f"contours overlay {title}")
     handles = []
     patch = mpatches.Patch(color='blue', label='fixed')
     handles.append(patch)
@@ -520,7 +521,7 @@ def overlay_contours(ctr1, ctr2, path, save=True, alpha=0.01):
     plt.close()
 
 
-def overlay_contours_interactive(ctrs1, ctrs2):
+def overlay_contours_interactive(ctrs1, ctrs2, title=''):
     """
     plotly interactive plot of 2 contours
     :param ctr1: np array (N,3) of physical coordinates
@@ -533,7 +534,7 @@ def overlay_contours_interactive(ctrs1, ctrs2):
     fig.add_trace(trace2)
     fig['layout'].update(height=600, width=800, title="contours overlay")
     print("sohwing plotly figure")
-    fig.write_html('contours_overlay.html', auto_open=True)
+    fig.write_html(f'contours_overlay_{title}.html', auto_open=True)
     # fig.show()
 
 
@@ -573,24 +574,28 @@ def plot_rmse(rmse, path, save=True):
     plt.close()
 
 
-def plot_rmse_and_contours(rmse, ctr1, ctr2, path, alpha=0.1, save=True):
+def plot_rmse_and_contours(arr_rmse, ctr1, ctr2, path, alpha=0.1, num_graphs=1, save=True):
     """
     plot rmse and contour overlay in the same plot
-    :param rmse: array of rmse
+    :param arr_rmse: array of rmse (N,M) N = number of points, M = num_graphs
     :param ctr1: np array (N,3) of physical coordinates
     :param ctr2: np array (N,3) of physical coordinates
     :param path: path to save
     :param save: flag for saving
     """
     plt.close("all")
-    fig = plt.figure(figsize=plt.figaspect(0.66))
-    ax = fig.add_subplot(1, 2, 1)
-    ax.plot(np.arange(len(rmse)), rmse)
-    ax.set_title("Registration convergence plot")
-    ax.set_xlabel("iteration")
-    ax.set_ylabel("metric")
+    fig = plt.figure(figsize=plt.figaspect(0.66), constrained_layout=True)
+    gs = GridSpec(num_graphs, 2, figure=fig)
+    # ax = fig.add_subplot(num_graphs, 2, 1)
+    for i in range(num_graphs):
+        ax = fig.add_subplot(gs[i, 0])
+        rmse = arr_rmse[i] if num_graphs > 1 else arr_rmse
+        ax.plot(np.arange(len(rmse)), rmse)
+        ax.set_title(f"Convergence plot {i}")
+        ax.set_xlabel("iteration")
+        ax.set_ylabel("metric")
     # Second subplot
-    ax = fig.add_subplot(1, 2, 2, projection='3d')
+    ax = fig.add_subplot(gs[:,1], projection='3d')
     ax.scatter(ctr1[:, 0], ctr1[:, 1], ctr1[:, 2], alpha=alpha, label='fixed', color='gray')
     ax.scatter(ctr2[:, 0], ctr2[:, 1], ctr2[:, 2], alpha=alpha, color='red', label='moving')
     ax.set_title("Contours Overlay")

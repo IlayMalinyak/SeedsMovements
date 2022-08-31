@@ -2,18 +2,17 @@
 # data:03/05/2022
 
 import PySimpleGUI as sg
-from matplotlib import pyplot as plt
-from matplotlib.widgets import Slider
 from utils import *
 from registration import register_sitk, warp_image_sitk, ContourRegistration, read_image, get_inverse_transform
 import SimpleITK as sitk
-from analyze import *
 import pandas as pd
 from visualization import *
 from scipy.spatial.transform import Rotation
 from scipy.ndimage import affine_transform
 from scipy.ndimage import rotate, shift
 import time
+import dill as pickle
+
 
 px = 1/plt.rcParams['figure.dpi']
 plt.rcParams["figure.figsize"] = (500*px,500*px)
@@ -25,6 +24,8 @@ OPTIMIZERS = ['GD', 'LBFGS2']
 
 NO_REGISTRATION_ERR = "No registration has been saved on this case yet. please choose registrarion" \
                       " type and run registrarion"
+
+BASE_ERROR = 1.3
 
 PLANE_DICT = {'XY':2,'XZ':1, 'YZ':0}
 SHIFT_DICT = {'X':0,"Y":1,"Z":2}
@@ -137,6 +138,14 @@ class App():
              sg.In(size=(15, 1), enable_events=True, key='-MOVING_CONTOURS_INPUT-', visible=False),
              sg.FileBrowse(font=font_text, key='-MOVING_CONTOURS_BROWS-', visible=False)
              ],
+            [sg.Text("Iterations", key='-CPD_ITER_TEXT-', visible=False),
+             sg.InputText(size=(6, 1), visible=False, key='-CPD_ITER-', enable_events=True),
+             sg.Text("Iterations non-rigid", key='-CPD_ITER_TEXT_2-', visible=False),
+             sg.InputText(size=(6, 1), visible=False, key='-CPD_ITER_2-', enable_events=True),
+             sg.Text("Outliers freq", key='-CPD_W_TEXT-', visible=False),
+             sg.InputText(size=(6, 1), visible=False, key='-CPD_W-', enable_events=True)
+             ],
+
             [sg.In(size=(15, 1), enable_events=True, visible=False, key='-TFM_INPUT-'),
              sg.FileBrowse(font=font_text, visible=False, key='-TFM_UPLOADER-')],
             [sg.Button("Run Registration", font=font_text, key='-REGISTER-'), sg.Button("Manual refinement",
@@ -243,6 +252,7 @@ class App():
         self.fixed_struct_sitk = None
 
         self.reg_stack = []
+        self.tfm_stack = []
         self.param_stack = []
         self.registration_type = None
         self.registration_params = {}
@@ -274,8 +284,8 @@ class App():
         self.errors = [None]
 
         self.df_features = ["Timestamp", "Experiment", "Registration Method", "Optimizer", "Metric", "Number Of Iterations", "Learning Rate",
-                            "Accuracy Threshold", "Convergence Delta", "RMSE", "% Correspondence set","Average Movement (mm)", "Median Movement (mm)",
-                            "Standard Deviation (mm)", "Maximum Movement (mm)", "Average Error (mm)"]
+                            "Accuracy Threshold", "Convergence Delta", "RMSE (mm)", "% Correspondence set","Average Movement (mm)", "Median Movement (mm)",
+                            "Standard Deviation (mm)", "Maximum Movement (mm)"]
         self.init_param_dict()
         self.message = ""
 
@@ -302,7 +312,6 @@ class App():
     def run_exclude_window(self):
         while True:
             event, values = self.exclude_win.read()
-            print(event)
             # if event == "-EXCLUDE_IN-":
             #     excludes = [int(i) for i in values[event].split(',')]
             #     self.inliers_idx = [i for i in range(self.seeds_tips_fixed.shape[-1]) if i not in excludes]
@@ -327,7 +336,7 @@ class App():
                 self.seeds_tips_fixed = self.seeds_tips_fixed[...,inliers_bool]
                 self.seeds_tips_moving = self.seeds_tips_moving[..., inliers_bool]
                 self.exclude_win.close()
-                print("closing window")
+                # print("closing window")
                 break
             if event == sg.WIN_CLOSED:  # Window close button event
                 break
@@ -340,9 +349,29 @@ class App():
         files = os.listdir('./registration_output/{}'.format(folder))
         return [i for i in files if i.endswith(extention)]
 
+    @staticmethod
+    def analyze_distances(case, dists, seeds1, seeds2, error, base_error=0.0, save=True):
+        """
+        calculate errors and plot results
+        :param case: case name
+        :param dists: movements
+        :param seeds1: (3,3,N) array of first seeds. the first axis represent 3 tips (start, middle,end). the second axis represent
+                3 coordinates (x,y,z)
+        :param seeds2: (3,3,N) array of second seeds.
+        :return: seeds1, seeds2, dist ((N,) array), errors ((N,) array)
+        """
+        error = error if error is not None else np.zeros(len(dists))
+        error += base_error
+        plot_pairs(seeds1, seeds2, case, save)
+        plot_individual_moves(case, dists, error, save)
+        # display_dists(seeds1, seeds2, "%s movements and matching" % case, "%s_matchs.jpg" % case)
+        return
+
     def run(self):
         while True:
             event, values = self.main_window.read()
+            # print(event, self.registration_params['iterations'])
+
             if event == sg.WIN_CLOSED:  # Window close button event
                 self.update_massage("Bye")
                 break
@@ -354,23 +383,15 @@ class App():
             if event == '-MOVING_FOLDER-':
                 self.upload_moving(values)
             if event == "-SEEDS_INPUT_1-":
-                seeds, orientation = read_structure(values[event], seeds=True)
-                self.seeds_tips_fixed = self.seeds_tips_fixed_orig = get_seeds_tips(seeds, orientation)
-                self.message = f"{self.seeds_tips_fixed.shape[-1]} seeds was loaded from contours"
-                self.update_massage(self.message)
-                self.hide_seeds_uploader(1)
+                self.get_seed_from_contour(values, event, 1)
             if event == "-SEEDS_INPUT_2-":
-                seeds, orientation = read_structure(values[event], seeds=True)
-                self.seeds_tips_moving = self.seeds_tips_moving_orig = get_seeds_tips(seeds, orientation)
-                self.message = f"{self.seeds_tips_moving.shape[-1]} seeds was loaded from contours"
-                self.update_massage(self.message)
-                self.hide_seeds_uploader(2)
+                self.get_seed_from_contour(values, event, 2)
             if event == "-DOMAIN-":
                 if self.fixed_viewer is not None:
                     self.fixed_viewer.annotate()
                     self.update_massage("draw the desired domain on the image")
                     y0,x0,y1,x1 = self.fixed_viewer.get_rect()
-                    print(y0,x0,y1,x1)
+                    # print(y0,x0,y1,x1)
                     self.domain = np.array([int(y0),int(x0),0]), np.array([int(y1),int(x1),self.fixed_array.shape[-1]])
             if event == "-DOMAIN_START-":
                 if self.domain is not None:
@@ -386,40 +407,50 @@ class App():
             if event == "-REG_MENU-":
                 self.clear_all_params()
                 self.registration_type = values[event]
-                print("reg type ", self.registration_type)
+                # print("reg type ", self.registration_type)
                 if self.registration_type == "ICP":
                     self.show_contour_params()
-                    self.hide_domain_params()
+                    self.show_domain_params(visible=False)
+                elif self.registration_type == 'CPD':
+                    self.show_probreg_params()
+                    self.show_domain_params(visible=False)
                 elif self.registration_type == "Bspline" or self.registration_type == 'Affine' or self.registration_type\
                 == "Affine+Bspline":
                     self.show_relevant_params_input()
                     self.init_param_dict()
                     self.show_domain_params()
                 elif self.registration_type == "Use saved Registration":
-                    print("should show uploader")
+                    # print("should show uploader")
                     self.main_window['-TFM_INPUT-'].update(visible=True)
                     self.main_window['-TFM_UPLOADER-'].update(visible=True)
-                    self.hide_domain_params()
+                    self.show_domain_params(visible=False)
             if event == "-TFM_INPUT-":
                 tfm_path = values[event]
-                self.registration_type = "saved_" + tfm_path.removesuffix('.tfm').split('_')[-1]
+                self.registration_type = "saved_" + tfm_path[:-4].split('_')[-1]
                 try: # TODO inverse for composite transform?
                     if self.registration_type == "saved_affine+bspline":
                         self.tfm = sitk.ReadTransform(tfm_path)
+                        self.reg_stack.append(self.tfm)
                     else:
                         self.tfm = sitk.ReadTransform(tfm_path)
                         self.inv_tfm, self.disp_img = get_inverse_transform(self.tfm, self.registration_type)
                 except Exception as e:
                     print(e)
-                    np.load(tfm_path)
+                    arr = np.load(tfm_path, allow_pickle=True)
+                    if self.registration_type == 'saved_ICP':
+                        self.tfm = arr
+                    elif self.registration_type == "saved_CPD":
+                        tfm1 = arr['rigid']
+                        self.reg_stack.append(tfm1)
+                        self.tfm = arr['nonrigid']
+                    self.reg_stack.append(self.tfm)
                 self.update_massage(f"{tfm_path} uploaded successfully ")
-            self.create_param_dicts(values)
             if event == "-CONTOURS_MENU-":
                 self.ctrs_source = values[event]
                 if self.ctrs_source == "csv file":
                     self.show_contours_brows()
                 else:
-                    self.hide_contours_brows()
+                    self.show_contours_brows(visible=False)
             if event == "-FIXED_CONTOURS_INPUT-":
                 self.fixed_ctrs_path = values[event]
             if event == "-MOVING_CONTOURS_INPUT-":
@@ -450,82 +481,49 @@ class App():
                     self.shift[SHIFT_DICT[axis]] = int(values[event])
                 except ValueError:
                     pass
+            if "-CPD_ITER" in event:
+                if event[-2] == '2':
+                    try:
+                        self.registration_params['iterations 2'] = values[event]
+                        # print(self.registration_params['iterations'])
+                    except ValueError:
+                        pass
+                else:
+                    try:
+                        self.registration_params['iterations'] = values[event]
+                        # print(self.registration_params['iterations'])
+                    except ValueError:
+                        pass
+            if event == "-CPD_W-":
+                try:
+                    self.registration_params['w'] = values[event]
+                except ValueError:
+                    pass
             if event == "-CLEAR_REGISTRATION-":
-                self.reset_data()
+                self.reset_data(values)
                 self.message = "All registrations cleared"
                 self.update_massage(self.message)
             if event == '-REGISTER-':
                 self.create_case_dir()
                 self.set_meta()
-                # if self.seeds_tips_moving is None:
-                #     self.seeds_tips_warped = self.seeds_tips_moving.copy()
+                if "Affine" in self.registration_type or "Bspline" in self.registration_type:
+                    self.create_sitk_param_dicts(values)
                 self.run_registration()
-                if self.tfm is not None:
-                    self.message = self.message + f"\n{self.registration_type} registration finished\n RMSE: {self.rmse[-1]}"
-                    self.update_massage(self.message)
-                    self.shift = np.array([0, 0, 0])
-                    self.euler_angles = np.array([0, 0, 0])
             if event == "-SAVE_REGISTRATION-":
-                if self.tfm is not None:
-                    tfm_path = f'./registration_output/{self.case_name}/transformation_{self.registration_type}'
-                    if self.registration_type == "Bspline" or self.registration_type == "Affine":
-                        tfm_path = f'{tfm_path}.tfm'
-                        sitk.WriteTransform(self.tfm, tfm_path)
-                    elif self.registration_type == "Affine+Bspline":
-                        tfm_path = f'./registration_output/{self.case_name}/transformation_affine+bspline.tfm'
-                        print(self.composite_tfm)
-                        sitk.WriteTransform(self.composite_tfm, tfm_path)
-                    elif self.registration_type == 'ICP':
-                        tfm_path = f'{tfm_path}.npy'
-                        np.save(tfm_path, self.tfm)
-                self.message = "Registration saved"
-                self.update_massage(self.message)
+               self.save_registration()
             if event == "-PLOT_REG-":
                 try:
                     self.main_window['-IMAGE-'].update(self.registration_plot_path)
                 except Exception as e:
                     self.update_massage("Nothing to show")
             if event == "-OVERLAY-":
-                try:
-                    self.set_meta()
-                    self.set_moving_mask()
-                    self.set_fixed_mask()
-                except IndexError as e:
-                    self.message = "Contours didn't trasnformed"
-                    self.update_massage(self.message)
-                    print(e)
-                # self.masked_moving_struct = np.ma.masked_where(self.moving_struct == 0, self.moving_struct) if self.moving_struct\
-                #                                                                             is not None else None
-                # self.warped_moving = self.moving_array if self.warped_moving is None else self.warped_moving
-                if self.overlay_viewer is not None:
-                    self.overlay_viewer.clear()
-                # self.masked_moving_struct = self.masked_fixed_struct = None
-                self.overlay_viewer = OverlayViewer(self.fixed_array, self.moving_array, self.main_window['-OVERLAY_CANVAS-'].TKCanvas,
-                                                    'overlay')
-                self.overlay_viewer.show()
-                # else:
-                #     moving_ctrs_points_transformed = apply_transformation(self.moving_ctrs_points, self.tfm)
-                #     overlay_contours(self.fixed_ctrs_points, moving_ctrs_points_transformed, self.case_name)
-                #     self.window['-IMAGE-'].update("./registration_output/{}/icp_overlay.png".format(self.case_name))
+                self.create_overlay()
 
             if event == "-ASSIGN_MENU-":
                 self.assignment_method = values[event]
 
             if event == '-ASSIGN-':
-                if self.assignment_method is None:
-                    self.update_massage("Please choose assignment method first")
-                else:
-                    if self.assignment_method == "Munkres":
-                        self.fixed_idx, self.moving_idx = assignment(self.seeds_tips_fixed, self.seeds_tips_moving
-                                                                            )
-                    else:
-                        path = values["-ASSIGN_INPUT-"]
-                        self.fixed_idx, self.moving_idx = parse_lists_from_file('./list')
-                    self.update_massage(f'assignment is:\n{self.fixed_idx}\n{self.moving_idx}')
-                    # self.window['-MSG-'].update(font=font_text)
-
-                # seeds1, seeds2, dists, errors = calculate_distances(case, seeds1, seeds2, meta_fixed, meta_moving, case_idx,
-                #                                                     assignment)
+                self.assign_seeds(values)
 
             if self.assignment_method == "Upload List":
                 self.show_assignment_uploader()
@@ -534,32 +532,7 @@ class App():
                 self.run_exclude_window()
             if event == "-CALC_MOVE-":
                 self.create_case_dir()
-                if self.fixed_idx is not None:
-                    if len(self.fixed_idx) > self.seeds_tips_fixed.shape[-1] or len(self.moving_idx) > \
-                            self.seeds_tips_moving.shape[-1]:
-                        self.update_massage(f'Assignment lists length and seeds number do not match\n'
-                                            f'Assignment lists lengths are: {len(self.fixed_idx)}, {len(self.moving_idx)}'
-                                            f'\nSeeds number are: {self.seeds_tips_fixed.shape[-1]},'
-                                            f' {self.seeds_tips_moving.shape[-1]} ')
-                    else:
-                        self.seeds_tips_fixed = self.seeds_tips_fixed[...,self.fixed_idx]
-                        self.seeds_tips_moving = self.seeds_tips_moving[..., self.moving_idx]
-                        # seeds1_assigned = self.seeds_tips_fixed[..., self.fixed_idx]
-                        # seeds2_assigned = self.seeds_tips_moving[..., self.moving_idx]
-                        self.assignment_dists = np.array(
-                            [calc_dist(self.seeds_tips_fixed[..., i], self.seeds_tips_moving[..., i], calc_max=True)
-                             for i in range(self.seeds_tips_moving.shape[-1])])
-                        error = np.ones(len(self.assignment_dists))*self.rmse[-1] if self.rmse[-1] is not None else None
-                        analyze_distances(self.case_name, self.assignment_dists, self.seeds_tips_fixed, self.seeds_tips_moving,
-                                          error)
-                        self.message = 'Number of assignments - {}\n sum of distances - '\
-                                            '{:.2f}\n average distance - {:.2f}'\
-                                            .format(len(self.assignment_dists), sum(self.assignment_dists),\
-                                                    np.mean(self.assignment_dists))
-                        self.update_massage(self.message)
-                        self.show_movement_buttons()
-                else:
-                    self.update_massage("Please assign pair first")
+                self.calc_move()
             if event == "-SHOW_MOVE-":
                 self.plot_name = "moves"
                 self.main_window['-IMAGE-'].update("./movement_output/{}/movements.png".format(self.case_name))
@@ -569,31 +542,7 @@ class App():
             if event == "-SHOW_PAIRS_INTERACTIVE-":
                 plot_seeds_and_contour_interactive(self.seeds_tips_fixed, self.seeds_tips_moving, self.moving_ctrs_points)
             if event == "-SAVE-":
-                rmse = [self.param_stack[i]['RMSE'] if 'RMSE' in self.param_stack[i].keys()
-                        else None for i in range(len(self.param_stack))]
-                try:
-                    print(self.rmse, self.correspondence)
-                    df = pd.DataFrame({self.df_features[0]:pd.to_datetime('today'), self.df_features[1]:self.case_name,
-                                       self.df_features[2]:self.registration_type,
-                                       self.df_features[3]:self.registration_params["optimizer"],self.df_features[4]:
-                                           self.registration_params['metric'], self.df_features[5]:
-                                       self.registration_params["iterations"], self.df_features[6]:self.registration_params['learning_rate'],
-                                      self.df_features[7]:self.registration_params['accuracy'],
-                                       self.df_features[8]:self.registration_params['convergence_val'],
-                                       self.df_features[9]:self.rmse, self.df_features[10]:self.correspondence,
-                                       self.df_features[11]:np.nanmean(self.assignment_dists), self.df_features[12]:np.nanmedian(self.assignment_dists),
-                                       self.df_features[13]:np.nanstd(self.assignment_dists),
-                                       self.df_features[14]:np.nanmax(self.assignment_dists), self.df_features[15]:np.nanmean(self.errors)},
-                                      index=[0])
-                    df.to_csv("./results.csv", mode='a', index=False, header=False, encoding='utf-8')
-                    self.message = self.message + "\nExperiment results were saved to results.csv"
-                    self.update_massage(self.message)
-                except PermissionError as e:
-                    self.update_massage("You have no permission to edit the file results.csv while its open."
-                                        " please close the file and try again")
-                except TypeError as e:
-                    self.update_massage("To save your results, you must register the dicoms, assign pairs and caluculate"
-                                        "distances")
+                self.save_results_to_csv()
 
 
 
@@ -613,36 +562,8 @@ class App():
         else:
             self.meta = self.fixed_dict['meta']
 
-    def show_manual_registration_params(self):
-        self.main_window['-XY_ROT_TEXT-'].update(visible=True)
-        self.main_window['-XY_ROT-'].update("", visible=True)
-        self.main_window['-XZ_ROT_TEXT-'].update(visible=True)
-        self.main_window['-XZ_ROT-'].update("", visible=True)
-        self.main_window['-YZ_ROT_TEXT-'].update(visible=True)
-        self.main_window['-YZ_ROT-'].update("", visible=True)
-        self.main_window['-X_SHIFT_TEXT-'].update(visible=True)
-        self.main_window['-X_SHIFT-'].update("", visible=True)
-        self.main_window['-Y_SHIFT_TEXT-'].update(visible=True)
-        self.main_window['-Y_SHIFT-'].update("", visible=True)
-        self.main_window['-Z_SHIFT_TEXT-'].update(visible=True)
-        self.main_window['-Z_SHIFT-'].update("", visible=True)
-
-    def hide_manual_registration_params(self):
-        self.main_window['-XY_ROT_TEXT-'].update(visible=False)
-        self.main_window['-XY_ROT-'].update(visible=False)
-        self.main_window['-XZ_ROT_TEXT-'].update(visible=False)
-        self.main_window['-XZ_ROT-'].update(visible=False)
-        self.main_window['-YZ_ROT_TEXT-'].update(visible=False)
-        self.main_window['-YZ_ROT-'].update(visible=False)
-        self.main_window['-X_SHIFT_TEXT-'].update(visible=False)
-        self.main_window['-X_SHIFT-'].update(visible=False)
-        self.main_window['-Y_SHIFT_TEXT-'].update(visible=False)
-        self.main_window['-Y_SHIFT-'].update(visible=False)
-        self.main_window['-Z_SHIFT_TEXT-'].update(visible=False)
-        self.main_window['-Z_SHIFT-'].update(visible=False)
-
     def get_seeds(self, dict):
-        print("loading seeds")
+        # print("loading seeds")
         seeds, orientation = get_seeds_dcm(dict['RTPLAN'])
         return get_seeds_tips(seeds, orientation)
         # self.fixed_seeds, self.fixed_orientation = get_seeds_dcm(self.fixed_dict["RTPLAN"])
@@ -704,42 +625,90 @@ class App():
                         #                                                 self.tfm)
                         #     self.update_arrays("icp")
                     self.reg_stack.append(self.registration_type)
+                    self.tfm_stack.append(self.tfm)
                     self.set_meta()
-                    print(self.tfm)
-                    print(self.moving_dict['meta'])
+                    # print(self.tfm)
+                    # print(self.moving_dict['meta'])
                 else:
                     self.update_massage("Enter Experiment Name")
             else:
                 self.update_massage("You must upload 2 DICOMS to perform registration")
         else:
             self.update_massage("No Registration to run")
+        if self.tfm is not None:
+            self.message = self.message + f"\n{self.registration_type} registration finished\n RMSE: {self.rmse[-1]}"
+            self.update_massage(self.message)
+            self.shift = np.array([0, 0, 0])
+            self.euler_angles = np.array([0, 0, 0])
         return
 
     def run_probreg_registration(self):
         reg_obj = registration.ContourRegistration(f'registration_output/{self.case_name}', self.case_name)
         if self.registration_type == 'CPD':
             s = time.time()
+            try:
+                rigid_iter = int(self.registration_params['iterations'])
+            except (ValueError, KeyError):
+                rigid_iter = 50
+            try:
+                iter_nonrigid = int(self.registration_params['iterations 2'])
+            except (ValueError, KeyError) as e:
+                print(e)
+                iter_nonrigid = 10
+            try:
+                w = float(self.registration_params['w'])
+            except (ValueError, KeyError):
+                w = 0.001
+
+            print("iter ", rigid_iter, " iter nonrigid ", iter_nonrigid, " w ", w)
+
+            self.message = self.message + ("\nRunning rigid CPD...")
+            self.update_massage(self.message)
             self.tfm, self.fixed_ctrs_points_down, self.moving_ctrs_points_down = reg_obj.cpd(self.fixed_ctrs_points_down,
-                                                                                    self.moving_ctrs_points_down)
-            print("finished cpd")
+                                                                                    self.moving_ctrs_points_down,
+                                                                                    max_iter=rigid_iter)
             self.fixed_ctrs_points = self.tfm.transform(self.fixed_ctrs_points)
             self.seeds_tips_fixed = apply_probreg_transformation_on_seeds(self.tfm, self.seeds_tips_fixed)
-            print("finished transforming seeds")
+            self.reg_stack.append(self.registration_type + "_rigid")
+            self.tfm_stack.append(self.tfm)
+
+            self.message = self.message + ("\nRunning non-rigid CPD...")
+            self.update_massage(self.message)
+            if iter_nonrigid:
+                self.tfm, self.fixed_ctrs_points_down, self.moving_ctrs_points_down = reg_obj.bcpd(self.fixed_ctrs_points_down,
+                                                                                        self.moving_ctrs_points_down,
+                                                                                        max_iter=iter_nonrigid, w=w)
+                v = self.tfm.v
+                invdisttree = registration.Invdisttree(self.fixed_ctrs_points_down, v, leafsize=10, stat=1)
+                interpol = invdisttree(self.fixed_ctrs_points, nnear=5, eps=0, p=1)
+                self.fixed_ctrs_points += interpol
+                self.seeds_tips_fixed = apply_probreg_transformation_on_seeds(self.tfm, self.seeds_tips_fixed,
+                                                                              self.fixed_ctrs_points_down, type='bcpd')
+            else:
+                self.tfm = np.eye(4)
             # rmse_arr = reg_obj.get_callback_obj().get_rmse()
+            # TODO create rigid and non rigid graphs
             criteria = log_to_dict('Logs/probreg.log')['Criteria']
-            plot_rmse_and_contours(criteria, self.fixed_ctrs_points_down, self.moving_ctrs_points_down,
-                                   self.registration_plot_path)
-            print("calculating rmse")
+            if iter_nonrigid:
+                loss = [criteria[:rigid_iter], criteria[rigid_iter:]]
+                num_graphs = 2
+            else:
+                loss = criteria
+                num_graphs = 1
+            plot_rmse_and_contours(loss, self.fixed_ctrs_points_down, self.moving_ctrs_points_down,
+                                   self.registration_plot_path, num_graphs=num_graphs)
+            # print("calculating rmse")
             self.rmse.append(calc_rmse(self.fixed_ctrs_points_down.T, self.moving_ctrs_points_down.T, 0.1))
-            print("time to transform ", time.time() - s)
+            # print("time to transform ", time.time() - s)
 
     def run_saved_registration(self):
-        print("running saved registration")
-        print(self.tfm)
-        print(self.fixed_sitk.GetOrigin(),self.moving_sitk.GetOrigin())
-        self.moving_sitk = warp_image_sitk(self.fixed_sitk, self.moving_sitk, self.tfm)
+        # print("running saved registration")
+        # print(self.tfm)
+        # print(self.fixed_sitk.GetOrigin(),self.moving_sitk.GetOrigin())
+
         reg_type = self.registration_type.split("_")[-1]
         if reg_type == 'Bspline' or reg_type == "Affine" or reg_type == "affine+bspline":
+            self.moving_sitk = warp_image_sitk(self.fixed_sitk, self.moving_sitk, self.tfm)
             self.seeds_tips_fixed = apply_transformation_on_seeds(self.tfm,
                                                                   self.seeds_tips_fixed,
                                                                   "sitk")
@@ -752,14 +721,30 @@ class App():
         #                                                           self.seeds_tips_fixed,
         #                                                           "sitk")
         #     self.fixed_ctrs_points = apply_sitk_transformation_on_struct(self.tfm, self.fixed_ctrs_points)
-        else:
+        elif reg_type == "ICP":
             self.seeds_tips_moving = apply_transformation_on_seeds(np.linalg.inv(self.tfm),
                                                                    self.seeds_tips_moving,
                                                                    "affine")
+        elif reg_type == "CPD":
+            tfm_rigid, tfm_nonrigid = self.reg_stack[-2:]
+            self.fixed_ctrs_points_down = tfm_rigid.transform(self.fixed_ctrs_points_down)
+            self.fixed_ctrs_points = tfm_rigid.transform(self.fixed_ctrs_points)
+            self.seeds_tips_fixed = apply_probreg_transformation_on_seeds(tfm_rigid, self.seeds_tips_fixed)
+
+            self.fixed_ctrs_points_down = tfm_nonrigid.transform(self.fixed_ctrs_points_down)
+            v = tfm_nonrigid.v
+            invdisttree = registration.Invdisttree(self.fixed_ctrs_points_down, v, leafsize=10, stat=1)
+            interpol = invdisttree(self.fixed_ctrs_points, nnear=5, eps=0, p=1)
+            self.fixed_ctrs_points += interpol
+            self.seeds_tips_fixed = apply_probreg_transformation_on_seeds(tfm_nonrigid, self.seeds_tips_fixed,
+                                                                          self.fixed_ctrs_points_down, type='bcpd')
+            self.rmse.append(calc_rmse(self.fixed_ctrs_points_down.T, self.moving_ctrs_points_down.T, 0.1))
+
+
 
     def run_composite_sitk_registration(self, types):
-        print("running composite registration")
-        print(self.registration_params)
+        # print("running composite registration")
+        # print(self.registration_params)
         self.composite_tfm = sitk.CompositeTransform(3)
         tmp_opt, tmp_metric, tmp_smp = self.registration_params["optimizer"], self.registration_params["metric"],\
         self.registration_params['sampling_percentage']
@@ -767,7 +752,7 @@ class App():
             seeds_pix = None if i == 0 else get_all_seeds_pixels(self.seeds_tips_fixed, self.fixed_dict['meta'],
                                                                 self.fixed_array.shape)
             self.run_sitk_registration(types[i], apply=False, domain=self.domain, exclude=seeds_pix)
-            print("transform type ", self.tfm.GetTransformEnum())
+            # print("transform type ", self.tfm.GetTransformEnum())
             if self.tfm.GetTransformEnum() == 13:
                 try:
                     self.composite_tfm.AddTransform(sitk.CompositeTransform(self.tfm).GetNthTransform(0))
@@ -776,6 +761,8 @@ class App():
                     self.composite_tfm.AddTransform(self.tfm)
             else:
                 self.composite_tfm.AddTransform(self.tfm)
+            self.reg_stack.append(self.registration_type + f"_{i}")
+            self.tfm_stack.append(self.tfm)
             self.registration_params["optimizer"] = self.registration_params["optimizer 2"]
             self.registration_params["metric"] = self.registration_params["metric 2"]
             self.registration_params["iterations"] = self.registration_params["iterations 2"]
@@ -793,14 +780,14 @@ class App():
         self.param_stack.append({"RMSE": self.rmse[-1]})
 
     def run_sitk_registration(self, type, apply=True, domain=None, exclude=None):
-        print(self.registration_type)
-        print(self.registration_params['optimizer'], self.registration_params['metric'], self.registration_params['iterations'])
+        # print(self.registration_type)
+        # print(self.registration_params['optimizer'], self.registration_params['metric'], self.registration_params['iterations'])
         if domain is not None:
             y0,x0,y1,x1 = self.fixed_viewer.get_rect()
             self.domain[0][:2] = [int(y0),int(x0)]
             self.domain[1][:2] = [int(y1),int(x1)]
             dom1, dom2 = self.domain[0], self.domain[1]
-            print("domain is ", self.domain)
+            # print("domain is ", self.domain)
         else:
             dom1, dom2 = None, None
         if len(self.reg_stack) == 0 or all(np.array(self.reg_stack) == 'ICP'):
@@ -819,7 +806,7 @@ class App():
             self.rmse.append(calc_rmse(self.fixed_ctrs_points.T, self.moving_ctrs_points.T, 0.001))
             self.param_stack.append({"RMSE": self.rmse})
         self.update_arrays("sitk")
-        print("after registration fixed: ", self.fixed_sitk.GetOrigin(), " moving: ", self.moving_sitk.GetOrigin())
+        # print("after registration fixed: ", self.fixed_sitk.GetOrigin(), " moving: ", self.moving_sitk.GetOrigin())
         self.param_stack.append(self.registration_params)
 
 
@@ -831,7 +818,7 @@ class App():
     def run_manual_registration(self):
 
         #TODO update arrays (numpy and sitk)
-        print('shift ', self.shift)
+        # print('shift ', self.shift)
         R = Rotation.from_euler("xyz", self.euler_angles, degrees=True)
         mean = np.mean(self.fixed_ctrs_points, axis=0)
         # print("R ", R.as_matrix())
@@ -880,7 +867,7 @@ class App():
                                 f"inlier rmse - {rmse}")
             if rmse < min_rmse[-1] and num_pairs > num_points * thresh:
                 min_rmse, best_reg, best_init = reg_obj.get_params()
-                best_ratio = num_pairs/num_points
+                best_ratio = np.min((num_pairs/num_points, 1))
             if dist_thresh >= max_dist:
                 break
             dist_thresh = dist_thresh + 0.1*dist_thresh
@@ -895,13 +882,13 @@ class App():
             self.fixed_ctrs_points_down = down_sample_array(self.fixed_ctrs_points)
             self.seeds_tips_fixed = apply_transformation_on_seeds(self.tfm, self.seeds_tips_fixed,
                                                                    "affine")
-            print("init ", best_init.transformation)
-            print("icp ", self.tfm)
+            # print("init ", best_init.transformation)
+            # print("icp ", self.tfm)
             # self.warped_struct = get_contour_mask(self.warped_ctrs_points.T, self.meta, self.fixed_array.shape)
             # self.masked_warped_struct = np.ma.masked_where(self.warped_struct == 0, self.warped_struct)
             # self.set_moving_mask() # TODO fix
             plot_rmse_and_contours(min_rmse, self.fixed_ctrs_points, self.moving_ctrs_points, self.registration_plot_path)
-            self.rmse.append(min_rmse[-1])
+            self.rmse.append(calc_rmse(self.fixed_ctrs_points.T, self.moving_ctrs_points.T, 0.001))
             self.correspondence = best_ratio*100
             self.param_stack.append({"RMSE":self.rmse, "% Correspondence set":self.correspondence})
             # overlay_contours(self.fixed_ctrs_points, self.moving_ctrs_points_transformed, self.case_name, save=False)
@@ -921,30 +908,31 @@ class App():
 
     def update_arrays(self, source='sitk'):
         if source == "sitk":
-            print("changing numpy arrays")
+            # print("changing numpy arrays")
             self.moving_array = np.transpose(sitk.GetArrayFromImage(self.moving_sitk), (1,2,0))
             self.fixed_array = np.transpose(sitk.GetArrayFromImage(self.fixed_sitk), (1, 2, 0))
-            print("moving array shape", self.moving_array.shape)
+            # print("moving array shape", self.moving_array.shape)
             if self.moving_struct_sitk is not None:
                 self.moving_struct = np.transpose(sitk.GetArrayFromImage(self.moving_struct_sitk), (1,2,0))
         else:
-            print("changing sitk image")
+            # print("changing sitk image")
             self.moving_sitk = sitk.Cast(sitk.GetImageFromArray(np.transpose(self.moving_array,(2,0,1))),sitk.sitkFloat32)
             if self.moving_struct is not None:
                 self.moving_struct_sitk = sitk.Cast(sitk.GetImageFromArray(np.transpose(self.moving_struct,(2,0,1))),sitk.sitkFloat32)
 
 
-    def upload_moving(self, values):
+    def upload_moving(self, values, read_im=True):
         self.message = ""
         self.rmse = [None]
         self.masked_moving_struct = self.masked_moving_struct_orig = None
         self.moving_ctrs_points = self.moving_ctrs_points_orig = None
         self.moving_struct = None
         self.moving_dict = get_all_dicom_files(values['-MOVING_FOLDER-'], {})
-        self.moving_array = read_dicom(self.moving_dict['CT'], self.moving_dict['meta'])
-        # self.moving_sitk = sitk.Cast(sitk.GetImageFromArray(np.transpose(self.moving_array, (2, 0, 1))),
-        #                             sitk.sitkFloat32)
-        self.moving_sitk = read_image(self.moving_dict['CT'])
+        if read_im:
+            self.moving_array = read_dicom(self.moving_dict['CT'], self.moving_dict['meta'])
+            # self.moving_sitk = sitk.Cast(sitk.GetImageFromArray(np.transpose(self.moving_array, (2, 0, 1))),
+            #                             sitk.sitkFloat32)
+            self.moving_sitk = read_image(self.moving_dict['CT'])
         # try:
         #     set_meta_data_to_sitk_image(self.moving_sitk, self.moving_dict['meta'])
         # except Exception as e:
@@ -953,7 +941,7 @@ class App():
         # set_meta_data_to_sitk_image(self.moving_sitk, self.moving_dict['meta'])
         if "RTPLAN" in self.moving_dict.keys():
             self.seeds_tips_moving = self.get_seeds(self.moving_dict)
-            self.seeds_tips_moving_orig = self.seeds_tips_moving.copy()
+            # self.seeds_tips_moving_orig = self.seeds_tips_moving.copy()
         else:
             self.show_seeds_uploader(2)
             self.message = self.message + "\ndidn't find any RTPLAN to load. if you want to load " \
@@ -961,185 +949,182 @@ class App():
         # self.seeds_tips_warped = self.seeds_tips_moving.copy()
         if 'RTSTRUCT' in self.moving_dict.keys():
             self.moving_ctrs_points = read_structure(self.moving_dict['RTSTRUCT'])[0][1].T
-            self.moving_ctrs_points_orig = self.moving_ctrs_points.copy()
+            # self.moving_ctrs_points_orig = self.moving_ctrs_points.copy()
             self.moving_ctrs_points_down = down_sample_array(self.moving_ctrs_points)
             # self.warped_ctrs_points = self.moving_ctrs_points.copy()
             try:
                 self.moving_struct = get_contour_mask(self.moving_ctrs_points.T, self.moving_dict['meta'], self.moving_array.shape)
                 self.moving_struct_sitk = sitk.Cast(sitk.GetImageFromArray(np.transpose(self.moving_struct,(2,0,1))),sitk.sitkFloat32)
                 self.masked_moving_struct = np.ma.masked_where(self.moving_struct == 0, self.moving_struct)
-                self.masked_moving_struct_orig = self.masked_moving_struct.copy()
+                # self.masked_moving_struct_orig = self.masked_moving_struct.copy()
             except Exception as e:
                 print(e)
                 self.message = f"error loading contours on dicom:\n {e}"
                 self.update_massage(self.message)
-        if self.moving_viewer is not None:
-            self.moving_viewer.clear()
-        self.moving_viewer = DicomViewer(self.moving_array, self.main_window['-MOVING_CANVAS-'].TKCanvas, 'moving',
-                                         self.masked_moving_struct)
-        self.moving_viewer.show()
+        if read_im:
+            if self.moving_viewer is not None:
+                self.moving_viewer.clear()
+            self.moving_viewer = DicomViewer(self.moving_array, self.main_window['-MOVING_CANVAS-'].TKCanvas, 'moving',
+                                             self.masked_moving_struct)
+            self.moving_viewer.show()
         self.message = self.message + "\n{} was uploaded successfully".format(self.moving_dict['meta']['ID'].value)
         self.update_massage(self.message)
         self.tfm = None
 
-    def upload_fixed(self, values):
+    def upload_fixed(self, values, read_im=True):
         self.message = ""
         self.rmse = [None]
         self.masked_fixed_struct = self.masked_fixed_struct_orig = None
         self.fixed_ctrs_points = self.fixed_ctrs_points_orig = None
         self.fixed_struct = None
         self.fixed_dict = get_all_dicom_files(values['-FIXED_FOLDER-'], {})
-        self.fixed_array = read_dicom(self.fixed_dict['CT'], self.fixed_dict['meta'])
-        # self.fixed_sitk = sitk.Cast(sitk.GetImageFromArray(np.transpose(self.fixed_array, (2, 0, 1))),
-        #                              sitk.sitkFloat32)
-        self.fixed_sitk = read_image(self.fixed_dict['CT'])
+        if read_im:
+            self.fixed_array = read_dicom(self.fixed_dict['CT'], self.fixed_dict['meta'])
+            # self.fixed_sitk = sitk.Cast(sitk.GetImageFromArray(np.transpose(self.fixed_array, (2, 0, 1))),
+            #                              sitk.sitkFloat32)
+            self.fixed_sitk = read_image(self.fixed_dict['CT'])
         # try:
         #     set_meta_data_to_sitk_image(self.fixed_sitk, self.fixed_dict['meta'])
         # except Exception as e:
         #     print(e)
         if "RTPLAN" in self.fixed_dict.keys():
             self.seeds_tips_fixed = self.get_seeds(self.fixed_dict)
-            self.seeds_tips_fixed_orig = self.seeds_tips_fixed.copy()
+            # self.seeds_tips_fixed_orig = self.seeds_tips_fixed.copy()
         else:
             self.show_seeds_uploader(1)
             self.message = self.message + "\ndidn't find any RTPLAN to load. if you want to load " \
                                           "seeds as contours, please load manually"
         if 'RTSTRUCT' in self.fixed_dict.keys():
             self.fixed_ctrs_points = read_structure(self.fixed_dict['RTSTRUCT'])[0][1].T
-            self.fixed_ctrs_points_orig = self.fixed_ctrs_points.copy()
+            # self.fixed_ctrs_points_orig = self.fixed_ctrs_points.copy()
             self.fixed_ctrs_points_down = down_sample_array(self.fixed_ctrs_points)
             try:
                 # struct = read_structure(self.fixed_dict['RTSTRUCT'])
                 self.fixed_struct = get_contour_mask(self.fixed_ctrs_points.T, self.fixed_dict['meta'], self.fixed_array.shape)
                 self.masked_fixed_struct = np.ma.masked_where(self.fixed_struct == 0, self.fixed_struct)
-                self.masked_fixed_struct_orig = self.masked_fixed_struct.copy()
+                # self.masked_fixed_struct_orig = self.masked_fixed_struct.copy()
             except Exception as e:
                 print(e)
                 self.message = f"error loading contours on dicom:\n {e}"
                 self.update_massage(self.message)
-        if self.fixed_viewer is not None:
-            self.fixed_viewer.clear()
-        self.fixed_viewer = DicomViewer(self.fixed_array, self.main_window['-FIXED_CANVAS-'].TKCanvas, 'fixed',
-                                        self.masked_fixed_struct)
-        self.fixed_viewer.show()
+        if read_im:
+            if self.fixed_viewer is not None:
+                self.fixed_viewer.clear()
+            self.fixed_viewer = DicomViewer(self.fixed_array, self.main_window['-FIXED_CANVAS-'].TKCanvas, 'fixed',
+                                            self.masked_fixed_struct)
+            self.fixed_viewer.show()
         self.message = self.message + "\n{} was uploaded successfully".format(self.fixed_dict['meta']['ID'].value)
         self.update_massage(self.message)
-        print("after reading ", self.fixed_sitk.GetOrigin())
+        # print("after reading ", self.fixed_sitk.GetOrigin())
         self.tfm = None
 
-    def reset_data(self):
-        self.moving_array = self.moving_array_orig
-        self.moving_sitk = read_image(self.moving_dict['CT'])
-        self.fixed_sitk = read_image(self.fixed_dict['CT'])
-        self.seeds_tips_moving = self.seeds_tips_moving_orig
-        # self.moving_ctrs_points = self.moving_ctrs_points_orig
-        self.seeds_tips_fixed = self.seeds_tips_fixed_orig
-        self.fixed_ctrs_points = self.fixed_ctrs_points_orig
-        self.fixed_ctrs_points_down = down_sample_array(self.fixed_ctrs_points)
-        self.rmse = [None]
-        self.domain = None
-        # self.update_arrays("affine")
-        try:
-            self.masked_moving_struct = self.masked_moving_struct_orig
-            self.masked_fixed_struct = self.masked_fixed_struct_orig
-        except:
-            pass
-        self.hide_seeds_uploader(1)
-        self.hide_seeds_uploader(2)
-        self.hide_domain_params()
+    def reset_data(self, values):
+        # self.moving_array = self.moving_array_orig
+        # self.moving_sitk = read_image(self.moving_dict['CT'])
+        # self.fixed_sitk = read_image(self.fixed_dict['CT'])
+        # self.seeds_tips_moving = self.seeds_tips_moving_orig
+        # self.seeds_tips_fixed = self.seeds_tips_fixed_orig
+        # self.fixed_ctrs_points = self.fixed_ctrs_points_orig
+        # self.fixed_ctrs_points_down = down_sample_array(self.fixed_ctrs_points)
+        # self.fixed_idx = self.moving_idx = None
+        # self.rmse = [None]
+        # self.domain = None
+        # # self.update_arrays("affine")
+        # try:
+        #     self.masked_moving_struct = self.masked_moving_struct_orig
+        #     self.masked_fixed_struct = self.masked_fixed_struct_orig
+        # except:
+        #     pass
+        self.upload_fixed(values, read_im=False)
+        self.upload_moving(values, read_im=False)
 
-    def show_domain_params(self):
-        self.main_window[f"-DOMAIN-"].update(visible=True)
-        self.main_window[f"-DOMAIN_START_TEXT-"].update(visible=True)
-        self.main_window[f"-DOMAIN_START-"].update(visible=True)
+        self.show_seeds_uploader(1, visible=False)
+        self.show_seeds_uploader(2, visible=False)
+        self.show_domain_params(visible=False)
+
+    def show_manual_registration_params(self, visible=True):
+        self.main_window['-XY_ROT_TEXT-'].update(visible=visible)
+        self.main_window['-XY_ROT-'].update("", visible=visible)
+        self.main_window['-XZ_ROT_TEXT-'].update(visible=visible)
+        self.main_window['-XZ_ROT-'].update("", visible=visible)
+        self.main_window['-YZ_ROT_TEXT-'].update(visible=visible)
+        self.main_window['-YZ_ROT-'].update("", visible=visible)
+        self.main_window['-X_SHIFT_TEXT-'].update(visible=visible)
+        self.main_window['-X_SHIFT-'].update("", visible=visible)
+        self.main_window['-Y_SHIFT_TEXT-'].update(visible=visible)
+        self.main_window['-Y_SHIFT-'].update("", visible=visible)
+        self.main_window['-Z_SHIFT_TEXT-'].update(visible=visible)
+        self.main_window['-Z_SHIFT-'].update("", visible=visible)
+
+    def show_domain_params(self, visible=True):
+        self.main_window[f"-DOMAIN-"].update(visible=visible)
+        self.main_window[f"-DOMAIN_START_TEXT-"].update(visible=visible)
+        self.main_window[f"-DOMAIN_START-"].update(visible=visible)
         self.main_window[f"-DOMAIN_START-"].update('')
-        self.main_window[f"-DOMAIN_END_TEXT-"].update(visible=True)
-        self.main_window[f"-DOMAIN_END-"].update(visible=True)
+        self.main_window[f"-DOMAIN_END_TEXT-"].update(visible=visible)
+        self.main_window[f"-DOMAIN_END-"].update(visible=visible)
         self.main_window[f"-DOMAIN_END-"].update('')
 
-    def hide_domain_params(self):
-        self.main_window[f"-DOMAIN-"].update(visible=False)
-        self.main_window[f"-DOMAIN_START-"].update(visible=False)
-        self.main_window[f"-DOMAIN_END-"].update(visible=False)
-        self.main_window[f"-DOMAIN_START_TEXT-"].update(visible=False)
-        self.main_window[f"-DOMAIN_END_TEXT-"].update(visible=False)
+    def show_seeds_uploader(self, num, visible=True):
+        self.main_window[f"-SEEDS_TEXT_{num}-"].update(visible=visible)
+        self.main_window[f"-SEEDS_INPUT_{num}-"].update(visible=visible)
+        self.main_window[f"-SEEDS_BROWSER_{num}-"].update(visible=visible)
 
-    def show_seeds_uploader(self, num):
-        self.main_window[f"-SEEDS_TEXT_{num}-"].update(visible=True)
-        self.main_window[f"-SEEDS_INPUT_{num}-"].update(visible=True)
-        self.main_window[f"-SEEDS_BROWSER_{num}-"].update(visible=True)
+    def show_probreg_params(self, visible=True):
+        self.main_window['-CPD_ITER_TEXT-'].update(visible=visible)
+        self.main_window['-CPD_ITER-'].update(visible=visible)
+        self.main_window['-CPD_ITER_TEXT_2-'].update(visible=visible)
+        self.main_window['-CPD_ITER_2-'].update(visible=visible)
+        self.main_window['-CPD_W_TEXT-'].update(visible=visible)
+        self.main_window['-CPD_W-'].update(visible=visible)
 
-    def hide_seeds_uploader(self, num):
-        self.main_window[f"-SEEDS_TEXT_{num}-"].update(visible=False)
-        self.main_window[f"-SEEDS_INPUT_{num}-"].update(visible=False)
-        self.main_window[f"-SEEDS_BROWSER_{num}-"].update(visible=False)
+    def show_contour_params(self, visible=True):
+        self.main_window['-GET_CONTOURS_TEXT-'].update(visible=visible)
+        self.main_window['-CONTOURS_MENU-'].update(visible=visible)
+        self.main_window['-ICP_THRESH_TEXT-'].update(visible=visible)
+        self.main_window['-ICP_THRESH-'].update(visible=visible)
 
-    def hide_contours_brows(self):
-        self.main_window["-FIXED_CONTOURS_TEXT-"].update(visible=False)
-        self.main_window["-FIXED_CONTOURS_INPUT-"].update(visible=False)
-        self.main_window["-FIXED_CONTOURS_BROWS-"].update(visible=False)
-        self.main_window["-MOVING_CONTOURS_TEXT-"].update(visible=False)
-        self.main_window["-MOVING_CONTOURS_INPUT-"].update(visible=False)
-        self.main_window["-MOVING_CONTOURS_BROWS-"].update(visible=False)
+    def show_contours_brows(self, visible=True):
+        self.main_window["-FIXED_CONTOURS_TEXT-"].update(visible=visible)
+        self.main_window["-FIXED_CONTOURS_INPUT-"].update(visible=visible)
+        self.main_window["-FIXED_CONTOURS_BROWS-"].update(visible=visible)
+        self.main_window["-MOVING_CONTOURS_TEXT-"].update(visible=visible)
+        self.main_window["-MOVING_CONTOURS_INPUT-"].update(visible=visible)
+        self.main_window["-MOVING_CONTOURS_BROWS-"].update(visible=visible)
 
-    def show_contours_brows(self):
-        self.main_window["-FIXED_CONTOURS_TEXT-"].update(visible=True)
-        self.main_window["-FIXED_CONTOURS_INPUT-"].update(visible=True)
-        self.main_window["-FIXED_CONTOURS_BROWS-"].update(visible=True)
-        self.main_window["-MOVING_CONTOURS_TEXT-"].update(visible=True)
-        self.main_window["-MOVING_CONTOURS_INPUT-"].update(visible=True)
-        self.main_window["-MOVING_CONTOURS_BROWS-"].update(visible=True)
-
-    def show_global_params(self):
-        self.main_window['-OPT_TEXT-'].update(visible=True)
-        self.main_window['-OPT_MENU-'].update(visible=True)
-        self.main_window['-METRIC_TEXT-'].update(visible=True)
-        self.main_window['-METRIC_MENU-'].update(visible=True)
+    def show_global_params(self, visible=True):
+        self.main_window['-OPT_TEXT-'].update(visible=visible)
+        self.main_window['-OPT_MENU-'].update(visible=visible)
+        self.main_window['-METRIC_TEXT-'].update(visible=visible)
+        self.main_window['-METRIC_MENU-'].update(visible=visible)
         for i in range(1,4):
-            self.main_window[f'-GLOBAL_PARAM_TEXT_{i}-'].update(visible=True)
-            self.main_window[f'-GLOBAL_PARAM_{i}-'].update(str(GLOBAL_PARAM_INIT[i - 1]), visible=True)
+            self.main_window[f'-GLOBAL_PARAM_TEXT_{i}-'].update(visible=visible)
+            self.main_window[f'-GLOBAL_PARAM_{i}-'].update(str(GLOBAL_PARAM_INIT[i - 1]), visible=visible)
         if self.registration_type == "Affine+Bspline":
-            self.main_window['-OPT_TEXT_2-'].update(visible=True)
-            self.main_window['-OPT_MENU_2-'].update(visible=True)
-            self.main_window['-METRIC_TEXT_2-'].update(visible=True)
-            self.main_window['-METRIC_MENU_2-'].update(visible=True)
-            self.main_window['-SAMPLE_TEXT_2-'].update(visible=True)
-            self.main_window['-SAMPLE_2-'].update(visible=True)
-            self.main_window['-NUM_ITER_2_TEXT-'].update(visible=True)
-            self.main_window['-NUM_ITER_2-'].update(visible=True)
-
-
-    def clear_global_params(self):
-        self.main_window['-OPT_TEXT-'].update(visible=False)
-        self.main_window['-OPT_MENU-'].update(visible=False)
-        self.main_window['-METRIC_TEXT-'].update(visible=False)
-        self.main_window['-METRIC_MENU-'].update(visible=False)
-        self.main_window['-OPT_TEXT_2-'].update(visible=False)
-        self.main_window['-OPT_MENU_2-'].update(visible=False)
-        self.main_window['-METRIC_TEXT_2-'].update(visible=False)
-        self.main_window['-METRIC_MENU_2-'].update(visible=False)
-        self.main_window['-SAMPLE_TEXT_2-'].update(visible=False)
-        self.main_window['-SAMPLE_2-'].update(visible=False)
-        self.main_window['-NUM_ITER_2_TEXT-'].update(visible=False)
-        self.main_window['-NUM_ITER_2-'].update(visible=False)
-        for i in range(1,4):
-            self.main_window[f'-GLOBAL_PARAM_TEXT_{i}-'].update(visible=False)
-            self.main_window[f'-GLOBAL_PARAM_{i}-'].update(visible=False)
+            self.main_window['-OPT_TEXT_2-'].update(visible=visible)
+            self.main_window['-OPT_MENU_2-'].update(visible=visible)
+            self.main_window['-METRIC_TEXT_2-'].update(visible=visible)
+            self.main_window['-METRIC_MENU_2-'].update(visible=visible)
+            self.main_window['-SAMPLE_TEXT_2-'].update(visible=visible)
+            self.main_window['-SAMPLE_2-'].update(visible=visible)
+            self.main_window['-NUM_ITER_2_TEXT-'].update(visible=visible)
+            self.main_window['-NUM_ITER_2-'].update(visible=visible)
 
     def clear_all_params(self):
         types = OPTIMIZERS
-        self.clear_global_params()
+        self.show_global_params(visible=False)
         for t in types:
             self.main_window[f'-{t}_PARAM_TEXT_1-'].update(visible=False)
             self.main_window[f'-{t}_PARAM_1-'].update(visible=False)
-        self.hide_contour_params()
-        self.hide_contours_brows()
-        self.hide_manual_registration_params()
+        self.show_probreg_params(visible=False)
+        self.show_contour_params(visible=False)
+        self.show_contours_brows(visible=False)
+        self.show_manual_registration_params(visible=False)
         self.main_window["-TFM_INPUT-"].update(visible=False)
         self.main_window["-TFM_UPLOADER-"].update(visible=False)
 
     def show_relevant_params_input(self):
-        print("showing params")
+        # print("showing params")
         if self.registration_type is not None:
             types = OPTIMIZERS
             self.clear_all_params()
@@ -1151,7 +1136,7 @@ class App():
         else:
             self.clear_all_params()
 
-    def create_param_dicts(self, values):
+    def create_sitk_param_dicts(self, values):
         if self.registration_type is not None:
             self.registration_params['optimizer'] = values['-OPT_MENU-']
             self.registration_params['metric'] = values['-METRIC_MENU-']
@@ -1207,18 +1192,6 @@ class App():
         else:
             self.update_massage(NO_REGISTRATION_ERR)
 
-    def show_contour_params(self):
-        self.main_window['-GET_CONTOURS_TEXT-'].update(visible=True)
-        self.main_window['-CONTOURS_MENU-'].update(visible=True)
-        self.main_window['-ICP_THRESH_TEXT-'].update(visible=True)
-        self.main_window['-ICP_THRESH-'].update(visible=True)
-
-    def hide_contour_params(self):
-        self.main_window['-GET_CONTOURS_TEXT-'].update(visible=False)
-        self.main_window['-CONTOURS_MENU-'].update(visible=False)
-        self.main_window['-ICP_THRESH_TEXT-'].update(visible=False)
-        self.main_window['-ICP_THRESH-'].update(visible=False)
-
     def get_ctrs_points(self, dict):
         if self.ctrs_source == "Auto Segmentation":
             points = None
@@ -1230,6 +1203,139 @@ class App():
             self.update_massage("please choose registration type first")
             points =None
         return points
+
+    def save_registration(self):
+        if len(self.reg_stack) > 0:
+            tfm_path = f'./registration_output/{self.case_name}/transformation_{self.registration_type}'
+            if self.registration_type == "Bspline" or self.registration_type == "Affine":
+                tfm_path = f'{tfm_path}.tfm'
+                sitk.WriteTransform(self.tfm, tfm_path)
+            elif self.registration_type == "Affine+Bspline":
+                tfm_path = f'./registration_output/{self.case_name}/transformation_affine+bspline.tfm'
+                # print(self.composite_tfm)
+                sitk.WriteTransform(self.composite_tfm, tfm_path)
+            elif self.registration_type == 'ICP':
+                tfm_path = f'{tfm_path}.npy'
+                np.save(tfm_path, self.tfm)
+            elif self.registration_type == 'CPD':
+                tfm_path = f'{tfm_path}.npz'
+                tfm_1 = self.tfm_stack[-2]
+                tfm_2 = self.tfm
+                tfm_dict = {"rigid": tfm_1, "nonrigid": tfm_2}
+                with open(tfm_path, "wb") as file:
+                    pickle.dump(tfm_dict, file)
+
+        self.message = "Registration saved"
+        self.update_massage(self.message)
+
+    def create_overlay(self):
+        try:
+            self.set_meta()
+            self.set_moving_mask()
+            self.set_fixed_mask()
+        except IndexError as e:
+            self.message = "Contours didn't trasnformed"
+            self.update_massage(self.message)
+            print(e)
+        # self.masked_moving_struct = np.ma.masked_where(self.moving_struct == 0, self.moving_struct) if self.moving_struct\
+        #                                                                             is not None else None
+        # self.warped_moving = self.moving_array if self.warped_moving is None else self.warped_moving
+        if self.overlay_viewer is not None:
+            self.overlay_viewer.clear()
+        # self.masked_moving_struct = self.masked_fixed_struct = None
+        self.overlay_viewer = OverlayViewer(self.fixed_array, self.moving_array,
+                                            self.main_window['-OVERLAY_CANVAS-'].TKCanvas,
+                                            'overlay')
+        self.overlay_viewer.show()
+        # else:
+        #     moving_ctrs_points_transformed = apply_transformation(self.moving_ctrs_points, self.tfm)
+        #     overlay_contours(self.fixed_ctrs_points, moving_ctrs_points_transformed, self.case_name)
+        #     self.window['-IMAGE-'].update("./registration_output/{}/icp_overlay.png".format(self.case_name))
+
+    def calc_move(self):
+        if self.fixed_idx is not None:
+            if len(self.fixed_idx) > self.seeds_tips_fixed.shape[-1] or len(self.moving_idx) > \
+                    self.seeds_tips_moving.shape[-1]:
+                self.update_massage(f'Assignment lists length and seeds number do not match\n'
+                                    f'Assignment lists lengths are: {len(self.fixed_idx)}, {len(self.moving_idx)}'
+                                    f'\nSeeds number are: {self.seeds_tips_fixed.shape[-1]},'
+                                    f' {self.seeds_tips_moving.shape[-1]} ')
+            else:
+                self.seeds_tips_fixed = self.seeds_tips_fixed[..., self.fixed_idx]
+                self.seeds_tips_moving = self.seeds_tips_moving[..., self.moving_idx]
+                # seeds1_assigned = self.seeds_tips_fixed[..., self.fixed_idx]
+                # seeds2_assigned = self.seeds_tips_moving[..., self.moving_idx]
+                self.assignment_dists = np.array(
+                    [calc_dist(self.seeds_tips_fixed[..., i], self.seeds_tips_moving[..., i], calc_max=True)
+                     for i in range(self.seeds_tips_moving.shape[-1])])
+                error = np.ones(len(self.assignment_dists)) * self.rmse[-1] if self.rmse[-1] is not None else None
+                self.analyze_distances(self.case_name, self.assignment_dists, self.seeds_tips_fixed,
+                                       self.seeds_tips_moving,
+                                       error, base_error=BASE_ERROR)
+                self.message = 'Number of assignments - {}\n sum of distances - ' \
+                               '{:.2f}\n average distance - {:.2f}' \
+                    .format(len(self.assignment_dists), sum(self.assignment_dists),
+                            np.mean(self.assignment_dists))
+                self.update_massage(self.message)
+                self.show_movement_buttons()
+        else:
+            self.update_massage("Please assign pair first")
+
+    def assign_seeds(self, values):
+        if self.assignment_method is None:
+            self.update_massage("Please choose assignment method first")
+        else:
+            if self.assignment_method == "Munkres":
+                self.fixed_idx, self.moving_idx = assignment(self.seeds_tips_fixed, self.seeds_tips_moving
+                                                             )
+            else:
+                path = values["-ASSIGN_INPUT-"]
+                self.fixed_idx, self.moving_idx = parse_lists_from_file('./list')
+            self.update_massage(f'assignment is:\n{self.fixed_idx}\n{self.moving_idx}')
+            # self.window['-MSG-'].update(font=font_text)
+
+        # seeds1, seeds2, dists, errors = calculate_distances(case, seeds1, seeds2, meta_fixed, meta_moving, case_idx,
+        #                                                     assignment)
+
+    def save_results_to_csv(self):
+        try:
+            reg_stack = None if len(self.reg_stack) == 0 else ','.join([str(i) for i in self.reg_stack])
+            rmse = None if len(self.rmse) == 1 else ','.join([str(i) for i in self.rmse[1:]])
+            # print(self.rmse, self.correspondence)
+            df = pd.DataFrame({self.df_features[0]: pd.to_datetime('today'), self.df_features[1]: self.case_name,
+                               self.df_features[2]: reg_stack,
+                               self.df_features[3]: self.registration_params["optimizer"], self.df_features[4]:
+                                   self.registration_params['metric'], self.df_features[5]:
+                                   self.registration_params["iterations"],
+                               self.df_features[6]: self.registration_params['learning_rate'],
+                               self.df_features[7]: self.registration_params['accuracy'],
+                               self.df_features[8]: self.registration_params['convergence_val'],
+                               self.df_features[9]: rmse, self.df_features[10]: self.correspondence,
+                               self.df_features[11]: np.nanmean(self.assignment_dists),
+                               self.df_features[12]: np.nanmedian(self.assignment_dists),
+                               self.df_features[13]: np.nanstd(self.assignment_dists),
+                               self.df_features[14]: np.nanmax(self.assignment_dists)},
+                              index=[0])
+            df.to_csv("./results.csv", mode='a', index=False, header=False, encoding='utf-8')
+            self.message = self.message + "\nExperiment results were saved to results.csv"
+            self.update_massage(self.message)
+        except PermissionError as e:
+            self.update_massage("You have no permission to edit the file results.csv while its open."
+                                " please close the file and try again")
+        except TypeError as e:
+            print(e)
+            self.update_massage("To save your results, you must assign pairs and calculate "
+                                "distances")
+
+    def get_seed_from_contour(self, values, event, num):
+        seeds, orientation = read_structure(values[event], seeds=True)
+        if num == 1:
+            self.seeds_tips_fixed = get_seeds_tips(seeds, orientation)
+        elif num == 2:
+            self.seeds_tips_moving = get_seeds_tips(seeds, orientation)
+        self.message = f"{seeds.shape[-1]} seeds was loaded from contours"
+        self.update_massage(self.message)
+        self.show_seeds_uploader(num, visible=False)
 
 
 if __name__ == "__main__":

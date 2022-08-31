@@ -12,9 +12,7 @@ import registration
 from SimpleITK import Euler3DTransform, GetArrayFromImage, GetImageFromArray
 from scipy.ndimage import binary_dilation, generate_binary_structure
 from scipy.spatial.transform import Rotation
-import json
-from matplotlib import pyplot as plt
-
+from scipy.optimize import linear_sum_assignment
 
 
 SEED_LENGTH_MM = 10
@@ -190,6 +188,107 @@ def get_seeds_tips(seed_position, seeds_orientation):
     # seeds_tips[:, 2, :] *= -1
     return seeds_tips
 
+
+def dist_array(point, arr):
+    dist = np.sqrt(np.sum((arr - point)**2, axis=-1))
+    print("dist ", dist)
+    dist = np.argsort(dist)
+    return dist
+
+def apply_transformation_on_centers(transform, seeds):
+    """
+    apply transformation on seeds centers
+    :param transform: simpleitk transformation object
+    :param seeds: (3,N) array of (x,y,z) coordinated of N seeds
+    :return: (3,N) array. centers transformed
+    """
+    new_centers = np.zeros((3, seeds.shape[-1]))
+    for i in range(seeds.shape[-1]):
+        new_point = transform.TransformPoint(seeds[:,i])
+        new_centers[:, i] = new_point
+    return new_centers
+
+
+def apply_transformation(points, trans):
+    points_hom = np.hstack((points, np.ones((points.shape[0], 1))))
+    new_points = trans @ points_hom.T
+    return new_points.T[:,:3]
+
+
+def apply_transformation_on_seeds(transform, seeds, type='sitk'):
+    """
+    apply transformation on entire length seeds
+    :param transform: simpleitk transformation object
+    :param seeds: (3,3,N) array - (start, middle,end) tips of (x,y,z) coordinated of N seeds
+    :return: (3,3,N) array. seeds transformed
+    """
+    new_seeds = np.zeros((3, 3, seeds.shape[-1]))
+    for i in range(seeds.shape[-1]):
+        new_seeds[0,:,i] = transform.TransformPoint(seeds[0,:,i]) if type == 'sitk' else\
+            apply_transformation(seeds[0,:,i][None,:],transform)
+        print("s ", seeds[0,:,i], new_seeds[0,:,i] - seeds[0,:,i])
+        new_seeds[2,:,i] = transform.TransformPoint(seeds[2,:,i]) if type == 'sitk' else\
+            apply_transformation(seeds[2,:,i][None,:],transform)
+        new_seeds[1,:,i]= (new_seeds[0,:,i] + new_seeds[2,:,i])/2
+    # for i in range(150):
+    #     for j in range(150):
+    #         for k in range(550,800):
+    #             new_p = np.array(transform.TransformPoint([i,j,k]))
+    #             print("manual ", new_p - [i,j,k])
+    return new_seeds
+
+
+def apply_scipy_transformation_on_seeds(transform, seeds):
+    s = transform.apply(seeds[0, :].T).T
+    e = transform.apply(seeds[2, :].T).T
+    m = (s + e) / 2
+    return np.vstack((s[None, ...], m[None, ...], e[None, ...]))
+
+
+def apply_nonrigid_probreg_transformation(source, target, trans):
+    displacement = np.dot(trans.g, trans.w)
+    invdisttree = registration.Invdisttree(source, displacement, leafsize=10, stat=1)
+    interpol = invdisttree(target, nnear=5, eps=0, p=1).T
+    return interpol
+
+
+def apply_probreg_transformation_on_seeds(trans, seeds, ctr=None, type='rigid'):
+    if type == "nonrigid":
+        interpol = apply_nonrigid_probreg_transformation(ctr, seeds[1].T, trans)
+        new_seeds = seeds + interpol[None,...]
+        return new_seeds
+    elif type == "bcpd":
+        rigid = trans.rigid_trans
+        v = trans.v
+        invdisttree = registration.Invdisttree(ctr, v, leafsize=10, stat=1)
+        interpol = invdisttree(seeds[1].T, nnear=5, eps=0, p=1).T
+        return apply_probreg_transformation_on_seeds(rigid, seeds + interpol[None,...])
+
+        # for i in range(seeds.shape[-1]):
+        #     s = seeds[:,:,i]
+        #     closest_idx = dist_array(s[1, :], ctr)
+        #     closest = displacement[closest_idx,:]
+        #     fig = plt.figure()
+        #     ax = fig.add_subplot(projection='3d')
+        #     ax.quiver(ctr[closest_idx[:3], 0], ctr[closest_idx[:3], 1],
+        #               ctr[closest_idx[:3], 2], closest[:3, 0], closest[:3, 1], closest[:3, 2],
+        #               length=1)
+        #     ax.plot(s[:,0], s[:,1], s[:,2])
+        #     plt.show()
+    elif type == "rigid":
+        s = trans.transform(seeds[0, :].T).T
+        e = trans.transform(seeds[2, :].T).T
+        m = (s + e) / 2
+        return np.vstack((s[None, ...], m[None, ...], e[None, ...]))
+
+
+def apply_sitk_transformation_on_struct(tfm, struct):
+    if struct is not None:
+        for i in range(struct.shape[0]):
+            new_p = tfm.TransformPoint(struct[i, :])
+            struct[i, :] = np.array(new_p)
+    return struct
+
 def down_sample_array(arr):
     """
     uniform down-sampling coordinate
@@ -246,7 +345,6 @@ def read_structure(dir, seeds=False):
     ((3,N) nd-array) of the perimeter voxels of the contour
     """
     for f in glob("%s/*.dcm" % dir):
-        pass
         # filename = f.split("/")[-1]
         ds = pydicom.dcmread(f)
         # print(ds)
@@ -520,6 +618,73 @@ def log_to_dict(path):
             value = c.split(':')[1]
             result[key].append(float(value))
     return result
+
+def calc_dist(x, y, calc_max=False):
+    """
+    calculate the distance between two seeds. the calculation done by the following:
+    fir each pair of seeds the euclidean distance is calculated between each corresponding segments. then either
+    the maximum or the average (depend on calc_max flag) among al segments distance is taken
+    :param x: (3,3) array. first seed. first axis represent three tips. second axis represent coordinated
+    :param y: (3,3) array. second seed
+    :param meta1: meta data dictionary for first seed
+    :param meta2:meta data dictionary for second seed
+    :param calc_max: flag to take maximum. if False , average is taken
+    :return: distance between seeds
+    """
+
+    dist = np.min(np.array([np.sqrt(np.sum((x[i,:][None,:] - y)**2, axis=1)) for i in range(x.shape[0])]), axis=1)
+    return np.max(dist) if calc_max else np.mean(dist)
+
+
+def assignment(seeds1, seeds2):
+    """
+    create assignment lists using Munkres algorithm
+    :param seeds1: (3,3,N) array of first seeds. the first axis represent 3 tips (start, middle,end). the second axis represent
+            3 coordinates (x,y,z)
+    :param seeds2: (3,3,N) array of second seeds.
+    :param meta1: meta data dictionary for first seed
+    :param meta2:meta data dictionary for second seed
+    :return:
+    """
+    C = np.zeros((seeds1.shape[-1], seeds2.shape[-1]))
+    for i in range(seeds1.shape[-1]):
+        C[i, :] = np.array([calc_dist(seeds1[..., i], seeds2[..., k]) for k in range(seeds2.shape[-1])])
+    row_ind, col_ind = linear_sum_assignment(C)
+    return row_ind, col_ind
+
+
+def calc_rmse(pt1, pt2, pct):
+    step = int(1/pct)
+    pt1, pt2 = pt1[:, ::step], pt2[:,::step]
+    idx1, idx2 = assignment(pt1[None], pt2[None])
+
+    pt1, pt2 = pt1[:,idx1], pt2[:, idx2]
+    # fig = plt.figure()
+    # ax = fig.add_subplot(projection='3d')
+    # ax.scatter(pt1[0], pt1[1], pt1[2])
+    # ax.scatter(pt2[0],pt2[1], pt2[2])
+    # for i in range(pt1.shape[-1]):
+    #     ax.plot([pt1[0,i], pt2[0,i]], [pt1[1,i], pt2[1,i]], [pt1[2,i], pt2[2,i]], color='green', alpha=0.5,
+    #                 linestyle='--')
+    # plt.show()
+    iou = iou_contours(pt1, pt2)
+    rmse = np.sqrt(np.mean(((pt1 - pt2)**2),axis=1))
+    dist = np.sqrt(np.sum((pt1 - pt2)**2, axis=0))
+    best = np.argsort(dist)[:len(dist)//4]
+    rmse_best = np.sqrt(np.mean(((pt1[:,best] - pt2[:,best])**2),axis=1))
+    err = np.mean(rmse_best * (1.5-iou))
+    return err if err is not None else 0
+
+
+def iou_contours(ctr1, ctr2):
+    mins = np.hstack((np.min(ctr1, axis=-1)[...,None], np.min(ctr2, axis=-1)[...,None]))
+    maxs = np.hstack((np.max(ctr1, axis=-1)[...,None], np.max(ctr2, axis=-1)[...,None]))
+    intersection = np.min(maxs, axis=1) - np.max(mins, axis=1)
+    intersection_vol = max((intersection[0]*intersection[1]*intersection[2], 0))
+    union = np.max(maxs, axis=1) - np.min(mins, axis=1)
+    union_vol = union[0]*union[1]*union[2]
+    return intersection_vol / union_vol
+
 
 
 
