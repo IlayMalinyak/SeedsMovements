@@ -70,7 +70,7 @@ class App():
         #
         # self.window_background['-C-'].expand(True, False,
         #                                 False)  # expand the titlebar's rightmost column so that it resizes correctly
-        sg.theme('Dark Blue 2')
+        sg.theme('Tan Blue')
 
         data_column = [
             [sg.Text('Experiment name ', size=(15, 1), font=font_header)],
@@ -118,8 +118,10 @@ class App():
              sg.Text('Sampling 2', key='-SAMPLE_TEXT_2-', visible=False),
               sg.InputText(size=(6, 1), visible=False, key='-SAMPLE_2-', enable_events=True),
              sg.Text('Number of Iterations 2', key='-NUM_ITER_2_TEXT-', visible=False),
-             sg.InputText(size=(6, 1), visible=False, key='-NUM_ITER_2-', enable_events=True)
-             ],
+             sg.InputText(size=(6, 1), visible=False, key='-NUM_ITER_2-', enable_events=True),
+            sg.Text('Bspline res (cm)', key='-BSPLINE_RES_TEXT-', visible=False),
+            sg.InputText(size=(6, 1), visible=False, key='-BSPLINE_RES-', enable_events=True)
+            ],
             [
              sg.Text('Convergence Tolerance', key='-GLOBAL_PARAM_TEXT_3-', visible=False),
              sg.InputText(size=(6, 1), visible=False, key='-GLOBAL_PARAM_3-', enable_events=True)
@@ -290,6 +292,10 @@ class App():
         self.message = ""
 
     def create_exclusion_window(self):
+        """
+        seeds exclusion window
+        :return: pysimplegui window
+        """
         data_column = [[sg.Text(f"Enter outliers indexes between 1 and {self.seeds_tips_fixed.shape[-1]} seperated "
                                 f"by comma", font=font_header)],
                   [sg.Input(key='-EXCLUDE_IN-', size=(30,4), enable_events=True)],
@@ -310,6 +316,9 @@ class App():
         return sg.Window('Exclusion window', layout, finalize=True, element_justification='c')
 
     def run_exclude_window(self):
+        """
+        run seeds exclusion window
+        """
         while True:
             event, values = self.exclude_win.read()
             # if event == "-EXCLUDE_IN-":
@@ -341,9 +350,6 @@ class App():
             if event == sg.WIN_CLOSED:  # Window close button event
                 break
 
-    def update_massage(self, massage):
-        self.main_window['-MSG-'].update(massage)
-
     @staticmethod
     def find_files_with_extention(folder, extention):
         files = os.listdir('./registration_output/{}'.format(folder))
@@ -368,6 +374,9 @@ class App():
         return
 
     def run(self):
+        """
+        run main window
+        """
         while True:
             event, values = self.main_window.read()
             # print(event, self.registration_params['iterations'])
@@ -556,23 +565,37 @@ class App():
             if event == sg.WIN_CLOSED or event == 'Exit':
                 break
 
+
+    def update_massage(self, massage):
+        """
+        update main window message
+        :param massage: str
+        """
+        self.main_window['-MSG-'].update(massage)
+
     def set_meta(self):
+        """
+        set relevant meta data dict
+        """
         if len(self.reg_stack) == 0 or (all(np.array(self.reg_stack) == 'ICP')):
             self.meta = self.moving_dict['meta']
         else:
             self.meta = self.fixed_dict['meta']
 
     def get_seeds(self, dict):
-        # print("loading seeds")
+        """
+        read seeds
+        :param dict: meta data dict
+        :return: 3x3xN array of seeds. first axis represent seed tips (start,mid,end), second axis represent
+        coordinates and N is the number of seed objects
+        """
         seeds, orientation = get_seeds_dcm(dict['RTPLAN'])
         return get_seeds_tips(seeds, orientation)
-        # self.fixed_seeds, self.fixed_orientation = get_seeds_dcm(self.fixed_dict["RTPLAN"])
-        # self.moving_seeds, self.moving_orientation = get_seeds_dcm(self.moving_dict["RTPLAN"])
-        # self.seeds_tips_fixed = get_seeds_tips(self.fixed_seeds, self.fixed_orientation)
-        # self.seeds_tips_moving = get_seeds_tips(self.moving_seeds, self.moving_orientation)
-        # self.seeds_tips_moving_warped = self.seeds_tips_moving
 
     def create_case_dir(self):
+        """
+        create registration output and movement output dirs
+        """
         if self.case_name not in os.listdir('./registration_output'):
             dir_name = f"./registration_output/{self.case_name}"
             os.mkdir(dir_name)
@@ -581,6 +604,11 @@ class App():
             os.mkdir(dir_name)
 
     def run_registration(self):
+        """
+        run registration. generally, the function will transform image, contour and seeds.
+        the current version do not transform image for manual,ICP,CPD registrations. sitk registration will transform
+        image to the fixed frame of reference and seeds and contour to the moving frame of reference
+        """
         if self.registration_type is not None:
             if self.fixed_array is not None and self.moving_array is not None:
                 if self.case_name is not None:
@@ -643,6 +671,10 @@ class App():
         return
 
     def run_probreg_registration(self):
+        """
+        run probreg rigid\non-rigid registration. the current version uses bayesian coherent point drift (bcpd) as non
+        rigid registration and coherent point drift (cpd) for rigid registration
+        """
         reg_obj = registration.ContourRegistration(f'registration_output/{self.case_name}', self.case_name)
         if self.registration_type == 'CPD':
             s = time.time()
@@ -671,6 +703,7 @@ class App():
             self.seeds_tips_fixed = apply_probreg_transformation_on_seeds(self.tfm, self.seeds_tips_fixed)
             self.reg_stack.append(self.registration_type + "_rigid")
             self.tfm_stack.append(self.tfm)
+            criteria = log_to_dict('Logs/probreg.log')['Criteria']
 
             self.message = self.message + ("\nRunning non-rigid CPD...")
             self.update_massage(self.message)
@@ -684,24 +717,32 @@ class App():
                 self.fixed_ctrs_points += interpol
                 self.seeds_tips_fixed = apply_probreg_transformation_on_seeds(self.tfm, self.seeds_tips_fixed,
                                                                               self.fixed_ctrs_points_down, type='bcpd')
+                criteria_nonrigid = log_to_dict('Logs/probreg.log')['Criteria']
+                plot_loss_and_contours([criteria, criteria_nonrigid], self.fixed_ctrs_points_down, self.moving_ctrs_points_down,
+                                       self.registration_plot_path, num_graphs=2)
             else:
                 self.tfm = np.eye(4)
+                plot_loss_and_contours(criteria, self.fixed_ctrs_points_down,
+                                       self.moving_ctrs_points_down,
+                                       self.registration_plot_path, num_graphs=1)
             # rmse_arr = reg_obj.get_callback_obj().get_rmse()
-            # TODO create rigid and non rigid graphs
-            criteria = log_to_dict('Logs/probreg.log')['Criteria']
-            if iter_nonrigid:
-                loss = [criteria[:rigid_iter], criteria[rigid_iter:]]
-                num_graphs = 2
-            else:
-                loss = criteria
-                num_graphs = 1
-            plot_rmse_and_contours(loss, self.fixed_ctrs_points_down, self.moving_ctrs_points_down,
-                                   self.registration_plot_path, num_graphs=num_graphs)
+            # criteria = log_to_dict('Logs/probreg.log')['Criteria']
+            # if iter_nonrigid:
+            #     loss = [criteria[:rigid_iter], criteria[rigid_iter:]]
+            #     num_graphs = 2
+            # else:
+            #     loss = criteria
+            #     num_graphs = 1
+            # plot_rmse_and_contours(loss, self.fixed_ctrs_points_down, self.moving_ctrs_points_down,
+            #                        self.registration_plot_path, num_graphs=num_graphs)
             # print("calculating rmse")
             self.rmse.append(calc_rmse(self.fixed_ctrs_points_down.T, self.moving_ctrs_points_down.T, 0.1))
             # print("time to transform ", time.time() - s)
 
     def run_saved_registration(self):
+        """
+        perform a saved registration
+        """
         # print("running saved registration")
         # print(self.tfm)
         # print(self.fixed_sitk.GetOrigin(),self.moving_sitk.GetOrigin())
@@ -743,6 +784,10 @@ class App():
 
 
     def run_composite_sitk_registration(self, types):
+        """
+        run composite sitk registration
+        :param types: types of registrations ("Affine", "Bspline", etc.)
+        """
         # print("running composite registration")
         # print(self.registration_params)
         self.composite_tfm = sitk.CompositeTransform(3)
@@ -780,6 +825,13 @@ class App():
         self.param_stack.append({"RMSE": self.rmse[-1]})
 
     def run_sitk_registration(self, type, apply=True, domain=None, exclude=None):
+        """
+        run sitk registration
+        :param type: "Affine", "Bspline"
+        :param apply: flag to apply on seeds
+        :param domain: domain for bspline
+        :param exclude: pixels to exclude in the optimization. for bspline
+        """
         # print(self.registration_type)
         # print(self.registration_params['optimizer'], self.registration_params['metric'], self.registration_params['iterations'])
         if domain is not None:
@@ -816,6 +868,9 @@ class App():
         #                                               default_val=0)
 
     def run_manual_registration(self):
+        """
+        run manual registration. rotation and shift
+        """
 
         #TODO update arrays (numpy and sitk)
         # print('shift ', self.shift)
@@ -845,6 +900,10 @@ class App():
         return R
 
     def run_adaptive_icp(self):
+        """
+        run ICP. the function will perform ICP (with fgr initialization) with different dist_thresh and will
+         take the best one
+        """
         reg_obj = ContourRegistration(f'registration_output/{self.case_name}', self.case_name)
         center_fixed = np.mean(self.fixed_ctrs_points, axis=0)
         center_moving = np.mean(self.moving_ctrs_points, axis=0)
@@ -887,7 +946,7 @@ class App():
             # self.warped_struct = get_contour_mask(self.warped_ctrs_points.T, self.meta, self.fixed_array.shape)
             # self.masked_warped_struct = np.ma.masked_where(self.warped_struct == 0, self.warped_struct)
             # self.set_moving_mask() # TODO fix
-            plot_rmse_and_contours(min_rmse, self.fixed_ctrs_points, self.moving_ctrs_points, self.registration_plot_path)
+            plot_loss_and_contours(min_rmse, self.fixed_ctrs_points, self.moving_ctrs_points, self.registration_plot_path)
             self.rmse.append(calc_rmse(self.fixed_ctrs_points.T, self.moving_ctrs_points.T, 0.001))
             self.correspondence = best_ratio*100
             self.param_stack.append({"RMSE":self.rmse, "% Correspondence set":self.correspondence})
@@ -920,8 +979,12 @@ class App():
             if self.moving_struct is not None:
                 self.moving_struct_sitk = sitk.Cast(sitk.GetImageFromArray(np.transpose(self.moving_struct,(2,0,1))),sitk.sitkFloat32)
 
-
     def upload_moving(self, values, read_im=True):
+        """
+        upload moving data - ct, contour, seeds
+        :param values: event values
+        :param read_im: flag to read ct
+        """
         self.message = ""
         self.rmse = [None]
         self.masked_moving_struct = self.masked_moving_struct_orig = None
@@ -941,6 +1004,8 @@ class App():
         # set_meta_data_to_sitk_image(self.moving_sitk, self.moving_dict['meta'])
         if "RTPLAN" in self.moving_dict.keys():
             self.seeds_tips_moving = self.get_seeds(self.moving_dict)
+            self.show_seeds_uploader(2, visible=False)
+
             # self.seeds_tips_moving_orig = self.seeds_tips_moving.copy()
         else:
             self.show_seeds_uploader(2)
@@ -972,6 +1037,11 @@ class App():
         self.tfm = None
 
     def upload_fixed(self, values, read_im=True):
+        """
+        upload fixed data - ct, contour, seeds
+        :param values: event values
+        :param read_im: flag to read ct
+        """
         self.message = ""
         self.rmse = [None]
         self.masked_fixed_struct = self.masked_fixed_struct_orig = None
@@ -989,6 +1059,7 @@ class App():
         #     print(e)
         if "RTPLAN" in self.fixed_dict.keys():
             self.seeds_tips_fixed = self.get_seeds(self.fixed_dict)
+            self.show_seeds_uploader(1, visible=False)
             # self.seeds_tips_fixed_orig = self.seeds_tips_fixed.copy()
         else:
             self.show_seeds_uploader(1)
@@ -1019,22 +1090,10 @@ class App():
         self.tfm = None
 
     def reset_data(self, values):
-        # self.moving_array = self.moving_array_orig
-        # self.moving_sitk = read_image(self.moving_dict['CT'])
-        # self.fixed_sitk = read_image(self.fixed_dict['CT'])
-        # self.seeds_tips_moving = self.seeds_tips_moving_orig
-        # self.seeds_tips_fixed = self.seeds_tips_fixed_orig
-        # self.fixed_ctrs_points = self.fixed_ctrs_points_orig
-        # self.fixed_ctrs_points_down = down_sample_array(self.fixed_ctrs_points)
-        # self.fixed_idx = self.moving_idx = None
-        # self.rmse = [None]
-        # self.domain = None
-        # # self.update_arrays("affine")
-        # try:
-        #     self.masked_moving_struct = self.masked_moving_struct_orig
-        #     self.masked_fixed_struct = self.masked_fixed_struct_orig
-        # except:
-        #     pass
+        """
+        reset all data without reading ct again
+        :param values: event values
+        """
         self.upload_fixed(values, read_im=False)
         self.upload_moving(values, read_im=False)
 
@@ -1109,6 +1168,8 @@ class App():
             self.main_window['-SAMPLE_2-'].update(visible=visible)
             self.main_window['-NUM_ITER_2_TEXT-'].update(visible=visible)
             self.main_window['-NUM_ITER_2-'].update(visible=visible)
+            self.main_window['-BSPLINE_RES_TEXT-'].update(visible=visible)
+            self.main_window['-BSPLINE_RES-'].update(visible=visible)
 
     def clear_all_params(self):
         types = OPTIMIZERS
@@ -1149,6 +1210,7 @@ class App():
             self.registration_params['metric 2'] = values['-METRIC_MENU_2-']
             self.registration_params['iterations 2'] = values['-NUM_ITER_2-']
             self.registration_params['sampling_percentage 2'] = values['-SAMPLE_2-']
+            self.registration_params['bspline_resolution'] = values['-BSPLINE_RES-']
 
     def init_param_dict(self):
         self.registration_params['optimizer'] = None
@@ -1172,6 +1234,9 @@ class App():
         self.main_window['-SAVE-'].update(visible=True)
 
     def use_saved_transformation(self):
+        """
+        read transformation file. file extension should be 'tfm' (sitk), 'npy' (ICP, manual) 'npz' (CPD)
+        """
         if self.case_name in os.listdir('./registration_output'):
             tfm_path = None
             tfm_files = self.find_files_with_extention(self.case_name, '.tfm')
@@ -1193,6 +1258,12 @@ class App():
             self.update_massage(NO_REGISTRATION_ERR)
 
     def get_ctrs_points(self, dict):
+        """
+        get contour points. in current version options are - read from dcm file, read from csv file.
+        in future versions - model for auto segmentation
+        :param dict: meta data dictionary
+        :return: contour points
+        """
         if self.ctrs_source == "Auto Segmentation":
             points = None
         elif self.ctrs_source == "dcm file":
@@ -1205,6 +1276,9 @@ class App():
         return points
 
     def save_registration(self):
+        """
+        save transformation result to file
+        """
         if len(self.reg_stack) > 0:
             tfm_path = f'./registration_output/{self.case_name}/transformation_{self.registration_type}'
             if self.registration_type == "Bspline" or self.registration_type == "Affine":
@@ -1253,6 +1327,9 @@ class App():
         #     self.window['-IMAGE-'].update("./registration_output/{}/icp_overlay.png".format(self.case_name))
 
     def calc_move(self):
+        """
+        caculate seeds movements
+        """
         if self.fixed_idx is not None:
             if len(self.fixed_idx) > self.seeds_tips_fixed.shape[-1] or len(self.moving_idx) > \
                     self.seeds_tips_moving.shape[-1]:
@@ -1282,6 +1359,10 @@ class App():
             self.update_massage("Please assign pair first")
 
     def assign_seeds(self, values):
+        """
+        assign seeds pairs. can be done by Munkres algorithm (default) or excplicit assign lists
+        :param values: event values
+        """
         if self.assignment_method is None:
             self.update_massage("Please choose assignment method first")
         else:
@@ -1328,6 +1409,12 @@ class App():
                                 "distances")
 
     def get_seed_from_contour(self, values, event, num):
+        """
+        read contour that represent seeds (from MIM)
+        :param values: event values
+        :param event: event
+        :param num: 1 - fixed , 2 - moving
+        """
         seeds, orientation = read_structure(values[event], seeds=True)
         if num == 1:
             self.seeds_tips_fixed = get_seeds_tips(seeds, orientation)

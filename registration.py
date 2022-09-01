@@ -11,6 +11,9 @@ from probreg import cpd, bcpd, callbacks
 
 
 class Callback:
+    """
+    class of callback function
+    """
     def __init__(self, source, target):
         self.source = source
         self.target = target
@@ -118,6 +121,9 @@ is exceedingly sensitive to distance and to h.
         return interpol if qdim > 1  else interpol[0]
 
 class ContourRegistration:
+    """
+    point set registration class. implement fast global registration, ICP, CPD and BCPD registrations
+    """
 
     def __init__(self, out_path, experiment_name):
         self.out_path = out_path
@@ -175,6 +181,14 @@ class ContourRegistration:
         return result
 
     def fast_global_registration(self, p1,p2,voxel_size):
+        """
+        fgr registration. more info can be found on
+         http://www.open3d.org/docs/0.8.0/tutorial/Advanced/fast_global_registration.html
+        :param p1: 3XN array of points
+        :param p2: 3XN array of points
+        :param voxel_size: down sample resolution
+        :return: fgr results registration (open3d registration result object)
+        """
         source,target,source_down, target_down,source_fpfh, target_fpfh = self.prepare_dataset(p1,p2,voxel_size)
         result = self.execute_fast_global_registration(source, target, source_fpfh, target_fpfh, voxel_size)
         # print("fast global - ", result)
@@ -216,6 +230,17 @@ class ContourRegistration:
             return None, None, fixed_surface, moving_surface
 
     def cpd(self, p1, p2, max_iter=50, type='rigid', callback=[], w=0):
+        """
+        coherent point drift. for more information, look at:
+        "Point Set Registration: Coherent Point Drift, Andriy Myronenko and Xubo Song"
+        :param p1: Nx3 numpy array of points
+        :param p2: Nx3 numpy array of target points
+        :param max_iter: maximum iterations
+        :param type: rigid (default), nonrigid
+        :param callback: callback function (implement __call__ method) that wil be executed each iteration
+        :param w: outliers/noise frequency
+        :return: probreg transformation object, transformed p1, p2
+        """
         fixed_surface, moving_surface, dist = self.prepare_points(p1, p2, surface=False)
         self.callback = [Callback(fixed_surface, moving_surface)] if len(callback) == 0 else callback
         # pcd = o3d.geometry.PointCloud()
@@ -232,6 +257,16 @@ class ContourRegistration:
         return tf_param, fixed_surface, moving_surface
 
     def bcpd(self, p1, p2, max_iter=50, callback=[], w=0):
+        """
+        coherent point drift. for more information, look at:
+        "A Bayesian Formulation of Coherent Point Drift, Osamu Hirose"
+        :param p1: Nx3 numpy array of points
+        :param p2: Nx3 numpy array of target points
+        :param max_iter: maximum iterations
+        :param callback: callback function (implement __call__ method) that wil be executed each iteration
+        :param w: outliers/noise frequency
+        :return: probreg transformation object, transformed p1, p2
+        """
         # fixed_surface, moving_surface, dist = self.prepare_points(p1, p2, surface=False)
         fixed_surface, moving_surface = p1,p2
         self.callback = [Callback(fixed_surface, moving_surface)] if len(callback) == 0 else callback
@@ -378,12 +413,23 @@ def warp_image_sitk(fixed, moving, outTx, mask=False, default_val=-1024):
 
 
 def get_inverse_transform(outx, type):
+    """
+    get sitk inverse transform
+    :param outx: sitk transformation object
+    :param type: "Bspline", "Affine"
+    :return: inverse transform
+    """
     if type == "Bspline":
         return inverse_bspline(outx)
     return outx.GetInverse(), None
 
 
 def inverse_bspline(outX):
+    """
+    invert Bspline transform
+    :param outX: original transform
+    :return: inverse transform
+    """
     print("inverting")
     df_inverter = sitk.InvertDisplacementFieldImageFilter()
     df_inverter.SetMaximumNumberOfIterations(100)
@@ -430,7 +476,11 @@ def bspline_registration(fixed_image, moving_image, out_path, params, domain_sta
 
     # Determine the number of BSpline control points using the physical
     # spacing we want for the finest resolution control grid.
-    grid_physical_spacing = [40, 40, 40]
+    if 'bspline_resolution' in params.keys():
+        res = int(params['bspline_resolution']*10)
+    else:
+        res = 40
+    grid_physical_spacing = [res, res, res]
     image_physical_size = [size*spacing for size,spacing in zip(fixed_image.GetSize(), fixed_image.GetSpacing())]
     mesh_size = [int(image_size/grid_spacing + 0.5) \
                  for image_size,grid_spacing in zip(image_physical_size,grid_physical_spacing)]
@@ -608,90 +658,3 @@ def plot_metric(registration_method):
     registration_method.AddCommand(sitk.sitkMultiResolutionIterationEvent, rgui.update_multires_iterations)
     registration_method.AddCommand(sitk.sitkIterationEvent, lambda: rgui.plot_values(registration_method))
 
-# @tf.function
-# def train_step_CT(grid, weights, optimizer, mov, fix, image_loss_name):
-#     """
-#     Train step function for backprop using gradient tape.
-#     GradientTape is a tensorflow API which automatically
-#     differentiates and facilitates the implementation of machine
-#     learning algorithms: https://www.tensorflow.org/guide/autodiff.
-#
-#     :param grid: reference grid return from util.get_reference_grid
-#     :param weights: trainable affine parameters [1, 4, 3]
-#     :param optimizer: tf.optimizers: choice of optimizer
-#     :param mov: moving image, tensor shape [1, m_dim1, m_dim2, m_dim3]
-#     :param fix: fixed image, tensor shape[1, f_dim1, f_dim2, f_dim3]
-#     :return loss: image dissimilarity to minimise
-#     """
-#
-#     # We initialise an instance of gradient tape to track operations
-#     with tf.GradientTape() as tape:
-#         pred = layer_util.resample(vol=mov, loc=layer_util.warp_grid(grid, weights))
-#         # Calculate the loss function between the fixed image
-#         # and the moving image
-#         loss = image_loss.dissimilarity_fn(
-#             y_true=fix, y_pred=pred, name=image_loss_name
-#         )
-#     gradients = tape.gradient(loss, [weights])
-#     # Applying the gradients
-#     optimizer.apply_gradients(zip(gradients, [weights]))
-#     return loss
-
-
-# def register_self_affine(fixed_path, moving_path, learning_rate, total_iter, image_loss_name):
-#     # normalisation to [0,1]
-#     fixed_image = read_dicom(fixed_path)
-#     moving_image = read_dicom(moving_path)
-#     fixed_image = tf.cast(tf.expand_dims(fixed_image, axis=0), dtype=tf.int16)
-#     fixed_image = (fixed_image - tf.reduce_min(fixed_image)) / (
-#             tf.reduce_max(fixed_image) - tf.reduce_min(fixed_image).numpy()
-#     )
-#     moving_image = tf.cast(tf.expand_dims(moving_image, axis=0), dtype=tf.int16)
-#     moving_image = (moving_image - tf.reduce_min(moving_image)) / (
-#             tf.reduce_max(moving_image) - tf.reduce_min(moving_image).numpy()
-#     )
-#
-#     # generate a radomly-affine-transformed moving image using DeepReg utils
-#     fixed_image_size = fixed_image.shape
-#     # The following function generates a random transform.
-#     transform_random = layer_util.random_transform_generator(batch_size=1, scale=0.2)
-#
-#     # We create a reference grid of image size
-#     grid_ref = layer_util.get_reference_grid(grid_size=fixed_image_size[1:4])
-#
-#     # We warp our reference grid by our random transform
-#     grid_random = layer_util.warp_grid(grid_ref, transform_random)
-#
-#     # We create an affine transformation as a trainable weight layer
-#     var_affine = tf.Variable(
-#         initial_value=[
-#             [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]]
-#         ],
-#         trainable=True,
-#     )
-#
-#     # We perform an optimisation by backpropagating the loss through to our
-#     # trainable weight layer.
-#     optimiser = tf.optimizers.Adam(learning_rate)
-#     loss_arr = []
-#     # Perform an optimisation for total_iter number of steps.
-#     for step in range(total_iter):
-#         loss_opt = train_step_CT(grid_ref, var_affine, optimiser, moving_image, fixed_image, image_loss_name)
-#         loss_arr.append(loss_opt)
-#         # if (step % 50) == 0:  # print info
-#         tf.print("Step", step, image_loss_name, loss_opt)
-#
-#     warped_moving = warp_image_sitk(moving_image, grid_ref, var_affine)
-#     plt.plot(len(loss_arr), loss_arr)
-#     plt.title("self affine")
-#     plt.savefig(f"{save_path}/self_affine.png")
-#     plt.show()
-#     return fixed_image.numpy().squeeze(axis=0), moving_image.numpy().squeeze(axis=0),\
-#            warped_moving.numpy().squeeze(axis=0), var_affine.numpy()
-#
-#
-# def warp_image_tf(moving_image, grid_ref, var_affine ):
-#     grid_opt = layer_util.warp_grid(grid_ref, var_affine)
-#     warped_moving_image = layer_util.resample(vol=moving_image, loc=grid_opt)
-#     return warped_moving_image
-#

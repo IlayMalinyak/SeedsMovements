@@ -70,7 +70,6 @@ class DicomViewer(BasicViewer):
         self.figure_canvas_agg.draw()
         self.figure_canvas_agg.get_tk_widget().pack(side='top', fill='both')
 
-
     def update_slice(self, val):
         # print("scroll event on ", self.name)
         # self.ind = int(abs(self.slice_slider.val - self.slices))
@@ -88,7 +87,6 @@ class DicomViewer(BasicViewer):
 
     def set_array(self, array):
         self.array = array
-
 
     def set_struct(self, array):
         self.mask = array
@@ -119,7 +117,6 @@ class DicomViewer(BasicViewer):
 
     def get_rect(self):
         return self.y0, self.x0, self.y1, self.x1
-
 
     def annotate(self):
         self.ax.add_patch(self.rect)
@@ -193,10 +190,12 @@ class OverlayViewer(DicomViewer):
         self.mask2 = mask2
 
 
-
-
-
 def parse_lists_from_file(path):
+    """
+    split a 2 lines with comma
+    :param path: path to file
+    :return: two lists
+    """
     with open(path, 'r') as f:
         list1 = f.readline().strip().split(',')
         list2 = f.readline().strip().split(',')
@@ -334,6 +333,7 @@ def plot_individual_moves(case, dists, error, save=True):
     :param case: study id
     :param dists: array if distances
     :param error: array of errors (same length as knn_dists)
+    :param save: flag for saving. if True - .png file will be saved on './movement_output/<case>/movements.png
     :return: None
     """
     plt.figure()
@@ -353,6 +353,15 @@ def plot_individual_moves(case, dists, error, save=True):
 
 
 def plot_individual_moves_outliers(case, dists, error, outliers_idx, save=True):
+    """
+    plot individual moves with outliers marked as red
+    :param case: study id
+    :param dists: array if distances
+    :param error: array of errors (same length as knn_dists)
+    :param outliers_idx: indexes of outliers
+    :param save: flag for saving. if True - .png file will be saved on './movement_output/<case>/movements_outliers.png
+    :return:
+    """
     fig = plt.figure()
     ax = fig.add_subplot()
     x = np.arange(1, len(dists) + 1)
@@ -381,7 +390,6 @@ def plot_individual_moves_outliers(case, dists, error, outliers_idx, save=True):
     plt.close()
 
 
-
 def plot_pairs(seeds1, seeds2, case, save=True):
     """
     plot seeds pairs
@@ -389,6 +397,8 @@ def plot_pairs(seeds1, seeds2, case, save=True):
             3 coordinates (x,y,z)
     :param seeds2: (3,3,N) array of second seeds.
     :param case: case name
+    :param save: flag for saving. if True - .png file will be saved on './movement_output/<case>/pairs.png
+
     """
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
@@ -412,6 +422,16 @@ def plot_pairs(seeds1, seeds2, case, save=True):
 
 
 def plot_pairs_with_outliers(seeds1, seeds2, outliers_idx, case, save=True):
+    """
+
+    :param seeds1: (3,3,N) array of first seeds. the first axis represent 3 tips (start, middle,end). the second axis represent
+            3 coordinates (x,y,z)
+    :param seeds2: (3,3,N) array of second seeds.
+    :param outliers_idx: indexes of outliers
+    :param case: case name
+    :param save: flag for saving. if True - .png file will be saved on './movement_output/<case>/pairs_outliers.png
+    :return: None
+    """
     fig = plt.figure(figsize=(8,8 ))
     ax = fig.add_subplot(projection='3d')
     n = seeds1.shape[-1]
@@ -440,13 +460,14 @@ def plot_pairs_with_outliers(seeds1, seeds2, outliers_idx, case, save=True):
     plt.close()
 
 
-def display_dists(seeds1, seeds2, title, fname, save=True):
+def display_dists(seeds1, seeds2, title, case, save=True):
     """
     plot matchs and distances
     :param seeds1: 3XN array of first seeds
     :param seeds2: 3XN array of second seeds
     :param title: title for plot
-    :param fname: file name for saving
+    :param case: case name
+    :param save: flag for saving. if True - .png file will be saved on './movement_output/<case>/dists.png
     :return: None
     """
     fig = plt.figure()
@@ -462,7 +483,7 @@ def display_dists(seeds1, seeds2, title, fname, save=True):
     plt.legend()
     plt.title(title)
     if save:
-        plt.savefig("us/graphs/%s" % fname)
+        plt.savefig("./movement_output/%s/dists.png" % (case))
     plt.close()
 
 
@@ -539,6 +560,14 @@ def overlay_contours_interactive(ctrs1, ctrs2, title=''):
 
 
 def plot_seeds_interactive(fig, seeds, title, color):
+    """
+    plot interactive seeds plot using plotly
+    :param fig: plotly go.Figure object
+    :param seeds: 3X3XN array of seeds
+    :param title: plot title
+    :param color: color of seeds
+    :return: plotly go.Figure object
+    """
     for i in range(seeds.shape[-1]):
         legend = True if i == 0 else False
         trace = go.Scatter3d(x=seeds[:,0,i],y=seeds[:,1,i], z=seeds[:,2,i], mode="lines", name=title,
@@ -548,6 +577,13 @@ def plot_seeds_interactive(fig, seeds, title, color):
 
 
 def plot_seeds_and_contour_interactive(seeds1, seeds2, ctr):
+    """
+    plot interactively seeds inside contour
+    :param seeds1: 3x3xN array
+    :param seeds2: 3x3xN array
+    :param ctr: Nx3 array
+    :return: None
+    """
     fig = go.Figure()
     trace1 = go.Scatter3d(x=ctr[:, 0], y=ctr[:, 1], z=ctr[:, 2], name="fixed", opacity=0.001, marker={'color':'cyan'},
                           showlegend=False)
@@ -574,7 +610,7 @@ def plot_rmse(rmse, path, save=True):
     plt.close()
 
 
-def plot_rmse_and_contours(arr_rmse, ctr1, ctr2, path, alpha=0.1, num_graphs=1, save=True):
+def plot_loss_and_contours(arr_rmse, ctr1, ctr2, path, alpha=0.1, num_graphs=1, save=True):
     """
     plot rmse and contour overlay in the same plot
     :param arr_rmse: array of rmse (N,M) N = number of points, M = num_graphs

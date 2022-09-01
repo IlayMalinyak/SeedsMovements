@@ -13,6 +13,7 @@ from SimpleITK import Euler3DTransform, GetArrayFromImage, GetImageFromArray
 from scipy.ndimage import binary_dilation, generate_binary_structure
 from scipy.spatial.transform import Rotation
 from scipy.optimize import linear_sum_assignment
+from matplotlib import pyplot as plt
 
 
 SEED_LENGTH_MM = 10
@@ -190,8 +191,14 @@ def get_seeds_tips(seed_position, seeds_orientation):
 
 
 def dist_array(point, arr):
+    """
+    distance from point array. sorted form closest
+    :param point: 3x1 array
+    :param arr: 3xN array
+    :return: N, array
+    """
     dist = np.sqrt(np.sum((arr - point)**2, axis=-1))
-    print("dist ", dist)
+    # print("dist ", dist)
     dist = np.argsort(dist)
     return dist
 
@@ -210,6 +217,12 @@ def apply_transformation_on_centers(transform, seeds):
 
 
 def apply_transformation(points, trans):
+    """
+    apply matrix transformation
+    :param points: 3xN array
+    :param trans: 4x4 transformation matrix (rotation + translation)
+    :return: Nx3 array
+    """
     points_hom = np.hstack((points, np.ones((points.shape[0], 1))))
     new_points = trans @ points_hom.T
     return new_points.T[:,:3]
@@ -226,7 +239,7 @@ def apply_transformation_on_seeds(transform, seeds, type='sitk'):
     for i in range(seeds.shape[-1]):
         new_seeds[0,:,i] = transform.TransformPoint(seeds[0,:,i]) if type == 'sitk' else\
             apply_transformation(seeds[0,:,i][None,:],transform)
-        print("s ", seeds[0,:,i], new_seeds[0,:,i] - seeds[0,:,i])
+        # print("s ", seeds[0,:,i], new_seeds[0,:,i] - seeds[0,:,i])
         new_seeds[2,:,i] = transform.TransformPoint(seeds[2,:,i]) if type == 'sitk' else\
             apply_transformation(seeds[2,:,i][None,:],transform)
         new_seeds[1,:,i]= (new_seeds[0,:,i] + new_seeds[2,:,i])/2
@@ -239,6 +252,12 @@ def apply_transformation_on_seeds(transform, seeds, type='sitk'):
 
 
 def apply_scipy_transformation_on_seeds(transform, seeds):
+    """
+    apply scipy Rotation transformation on seeds
+    :param transform: scipy Rotation transformation
+    :param seeds: 3x3xN array
+    :return: 3x3xN array
+    """
     s = transform.apply(seeds[0, :].T).T
     e = transform.apply(seeds[2, :].T).T
     m = (s + e) / 2
@@ -246,6 +265,13 @@ def apply_scipy_transformation_on_seeds(transform, seeds):
 
 
 def apply_nonrigid_probreg_transformation(source, target, trans):
+    """
+    apply probreg nonrigid tranformation using IDW interpolation
+    :param source: Nx3
+    :param target: Nx3
+    :param trans: probreg nonrigid transformation object
+    :return:
+    """
     displacement = np.dot(trans.g, trans.w)
     invdisttree = registration.Invdisttree(source, displacement, leafsize=10, stat=1)
     interpol = invdisttree(target, nnear=5, eps=0, p=1).T
@@ -253,6 +279,14 @@ def apply_nonrigid_probreg_transformation(source, target, trans):
 
 
 def apply_probreg_transformation_on_seeds(trans, seeds, ctr=None, type='rigid'):
+    """
+    apply probreg transformation on seeds
+    :param trans: probreg transformation object
+    :param seeds: 3x3xN array
+    :param ctr: Nx3 array
+    :param type: 'rigid', 'nonrigid', 'bcpd'
+    :return: 3x3xN array of transformed seeds
+    """
     if type == "nonrigid":
         interpol = apply_nonrigid_probreg_transformation(ctr, seeds[1].T, trans)
         new_seeds = seeds + interpol[None,...]
@@ -283,6 +317,12 @@ def apply_probreg_transformation_on_seeds(trans, seeds, ctr=None, type='rigid'):
 
 
 def apply_sitk_transformation_on_struct(tfm, struct):
+    """
+    apply sitk transformation in contour
+    :param tfm: sitk transformation object
+    :param struct: Nx3 array
+    :return: struct transformed (Nx3)
+    """
     if struct is not None:
         for i in range(struct.shape[0]):
             new_p = tfm.TransformPoint(struct[i, :])
@@ -428,13 +468,28 @@ def convert_dcm_to_pixel(dcm_coords, meta):
     return pixel_cord[:3]
 
 def get_seeds_tips_pixels(seeds_tips_dcm, meta):
+    """
+    convert seeds array from mm to pixels
+    :param seeds_tips_dcm: 3x3xN array
+    :param meta: dicom meta data dict
+    :return: 3x3xN array of seeds tips in pixels
+    """
     s = convert_dcm_to_pixel(seeds_tips_dcm[0], meta)
     e = convert_dcm_to_pixel(seeds_tips_dcm[-1], meta)
     m = (s + e) // 2
     seeds_pixels = np.vstack((s[None,...], m[None,...], e[None,...])).astype(np.int16)
     # seeds_pixels[:,2,:] = meta['numSlices'] - seeds_pixels[:,2,:]
     return seeds_pixels
+
 def get_contour_mask(arr, meta, shape, flip_z=True):
+    """
+    convert contour array to mask image
+    :param arr: 3xN contour array
+    :param meta: meta data dict
+    :param shape: shape of mask
+    :param flip_z: flip_z flag for compatibilty with rodiological view
+    :return: boolean mask with shape (shape)
+    """
     M = np.linalg.inv(pixel_to_mm_transformation_mat(meta))
     arr = np.vstack((arr, np.ones(arr.shape[1])))
     arr = M @ arr
@@ -459,17 +514,31 @@ def read_structure_from_csv(path):
     arr = df.to_numpy()
     return arr[:, :3].T
 
+
 def get_spacing_array(meta):
+    """
+    get spacing array - [x pixel spacing, y pixel spacing, z pixel spacing]
+    :param meta: meta data dict
+    :return: spacing array
+    """
     try:
         spacing = np.array([meta['pixelSpacing'][0],
                                                       meta['pixelSpacing'][1],meta['sliceSpacing']])
     except Exception as e:
-        print("spacing array ", e)
+        # print("spacing array ", e)
         spacing = np.array([meta['pixelSpacing'][0],
                   meta['pixelSpacing'][1], meta['sliceThickness']])
     return spacing
 
 def get_contour_domain(ctr1, ctr2, meta, flip_z=True):
+    """
+    get bbox of 2 contours
+    :param ctr1: 3XN array
+    :param ctr2: 3N array
+    :param meta: meta data dict
+    :param flip_z: flip_z flag for compatibilty with rodiological view
+    :return: tuple of (min col, min row, min slice), (max col, max row, max slice)
+    """
     min_1 = np.min(ctr1, axis=1)
     max_1 = np.max(ctr1, axis=1)
     min_2 = np.min(ctr2, axis=1)
@@ -494,6 +563,13 @@ def get_contour_domain(ctr1, ctr2, meta, flip_z=True):
 
 
 def get_manual_domain(origin_px, end_px, meta):
+    """
+    convert pixel bbox to mm
+    :param origin_px: origin of bbox (row, col , slice)
+    :param end_px: end of bbox (row, col, slice)
+    :param meta: meta data dict
+    :return: tuple of (min col, min row, min slice), (max col, max row, max slice)
+    """
     M = pixel_to_mm_transformation_mat(meta)
     origin_hom = np.vstack((origin_px[:,None], np.ones((1, 1))))
     origin_hom[[0,1]] = origin_hom[[1,0]]
@@ -508,6 +584,14 @@ def get_manual_domain(origin_px, end_px, meta):
 
 
 def get_all_seeds_pixels(seeds_tips_dcm, meta, shape=None):
+    """
+    convert seeds array from mm to pixel
+    :param seeds_tips_dcm: 3x3xN array of seeds in mm
+    :param meta: meta data dict
+    :param shape: shape of mask to perform dilation for seeds shape (to take into account the real size and
+     artifact seen on CT). if None - no dilation will be performed
+    :return: 3XM array of all seeds pixel coordinates. M is bigger than N
+    """
     seeds_tips_px = get_seeds_tips_pixels(seeds_tips_dcm, meta)
     seeds_tips_px[:, 2, :] = meta['numSlices'] - seeds_tips_px[:, 2, :]
     seeds_pixels = np.zeros((0, 3)).astype(np.int16)
@@ -529,6 +613,14 @@ def get_all_seeds_pixels(seeds_tips_dcm, meta, shape=None):
 
 
 def wrap_image_with_matrix(fixed_arr, moving_arr, meta, transformation_mat):
+    """
+    tranform image with np array
+    :param fixed_arr: np array of fixed image
+    :param moving_arr: np array of moving image
+    :param meta: meta data dict
+    :param transformation_mat: 4x4 transformation matrix
+    :return:transformed moving_arr
+    """
     spacing = get_spacing_array(meta)
     fixed = GetImageFromArray(np.transpose(fixed_arr,(2,0,1)))
     # set_meta_data_to_sitk_image(fixed, fixed_meta, 3)
@@ -541,7 +633,7 @@ def wrap_image_with_matrix(fixed_arr, moving_arr, meta, transformation_mat):
     # t = np.linalg.inv(M) @ t
     r = transformation_mat[:3,:3]
     rot = Rotation.from_matrix(r).as_euler('xyz')
-    print(rot)
+    # print(rot)
     # r = np.eye(3)
     # p_z_y = np.array([[1,0,0],[0,0,1],[0,1,0]])
     # p_x_y = np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]])
@@ -551,10 +643,10 @@ def wrap_image_with_matrix(fixed_arr, moving_arr, meta, transformation_mat):
     tfm = Euler3DTransform()
     tfm.SetRotation(rot[0],rot[1],rot[2])
     tfm.SetTranslation(t)
-    print(tfm)
+    # print(tfm)
     warped = registration.warp_image_sitk(fixed, moving, tfm)
     warped_arr = np.transpose(GetArrayFromImage(warped),(1,2,0))
-    print("fixed arr ", fixed_arr.shape, " fixed sitk", fixed.GetSize(), " warped ", warped_arr.shape)
+    # print("fixed arr ", fixed_arr.shape, " fixed sitk", fixed.GetSize(), " warped ", warped_arr.shape)
     return warped_arr
 
 # def get_structure_from_segmentation(fixed_path, moving_path, name, predict=True):
@@ -589,7 +681,13 @@ def unzip_dir(dir):
     return dir
 
 
-def set_meta_data_to_sitk_image(img, meta, dim=4):
+def set_meta_data_to_sitk_image(img, meta):
+    """
+    set sitk image with meta data
+    :param img: sitk image object
+    :param meta: meta data dict
+    :return:
+    """
     try:
         spacing = abs(meta["pixelSpacing"][0]), abs(meta["pixelSpacing"][1]), abs(meta["sliceSpacing"])
     except Exception as e:
@@ -605,11 +703,17 @@ def set_meta_data_to_sitk_image(img, meta, dim=4):
 
 
 def log_to_dict(path):
+    """
+    read log file into dict. function assume the log file line structure is:
+    Iteration: <value>, <criteria>: <value>
+    :param path: path to log file
+    :return: dict with <criteria> key and values
+    """
     log_data = open(path, 'r')
     result = {}
     for line in log_data:
         # print(line)
-        columns = line.split(', ')[2:]
+        columns = line.split(', ')[1:]
         for c in columns:
             # print(c.split(': '))
             key = c.split(':')[0]
@@ -654,6 +758,16 @@ def assignment(seeds1, seeds2):
 
 
 def calc_rmse(pt1, pt2, pct):
+    """
+    calculate modified rmse between two contours.. the rmse calculation is as follow:
+    mean(best_rmse * (1.5 - iou)) where best_rmse is the 25% closest points rmse, iou
+    is the intersection over union of the two contours and the mean is over all coordinates
+    points correspondence calculated using Munkres algorithm
+    :param pt1: 3xN array
+    :param pt2: 3xN array
+    :param pct: down sample fraction (<=1)
+    :return: rmse
+    """
     step = int(1/pct)
     pt1, pt2 = pt1[:, ::step], pt2[:,::step]
     idx1, idx2 = assignment(pt1[None], pt2[None])
@@ -677,6 +791,12 @@ def calc_rmse(pt1, pt2, pct):
 
 
 def iou_contours(ctr1, ctr2):
+    """
+    caluclate 3d iou between two point set
+    :param ctr1: 3xN array
+    :param ctr2: 3xN array
+    :return: iou (number between 0-1)
+    """
     mins = np.hstack((np.min(ctr1, axis=-1)[...,None], np.min(ctr2, axis=-1)[...,None]))
     maxs = np.hstack((np.max(ctr1, axis=-1)[...,None], np.max(ctr2, axis=-1)[...,None]))
     intersection = np.min(maxs, axis=1) - np.max(mins, axis=1)
