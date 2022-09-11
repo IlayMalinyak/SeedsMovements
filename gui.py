@@ -186,7 +186,9 @@ class App():
             [sg.VPush()],
             [sg.VPush()],
             [sg.Text("Calculate movements", font=font_header)],
-            [sg.Button("Calculate", font=font_text, key='-CALC_MOVE-')],
+            [sg.Button("Calculate Max", font=font_text, key='-CALC_MOVE-')
+             ,sg.Button("Calculate Average", font=font_text, key='-CALC_MOVE_AVERAGE-')
+                ,sg.Button("Calculate Centers", font=font_text, key='-CALC_MOVE_CENTER-')],
             [sg.Button("Show movements", font=font_text, key='-SHOW_MOVE-', visible=False), sg.Button("Show Pairs",
             font=font_text, key='-SHOW_PAIRS-', visible=False), sg.Button("Show Pairs interactive",
             font=font_text, key='-SHOW_PAIRS_INTERACTIVE-', visible=False),
@@ -276,6 +278,7 @@ class App():
 
 
         self.assignment_method = None
+        self.assigned = False
         # self.fixed_seeds, self.fixed_orientation = None, None
         # self.moving_seeds, self.moving_orientation = None, None
         self.seeds_tips_fixed = None
@@ -320,6 +323,7 @@ class App():
         run seeds exclusion window
         """
         while True:
+            self.create_case_dir()
             event, values = self.exclude_win.read()
             # if event == "-EXCLUDE_IN-":
             #     excludes = [int(i) for i in values[event].split(',')]
@@ -366,8 +370,9 @@ class App():
         :param seeds2: (3,3,N) array of second seeds.
         :return: seeds1, seeds2, dist ((N,) array), errors ((N,) array)
         """
+        base = np.ones_like(error)*base_error
         error = error if error is not None else np.zeros(len(dists))
-        error += base_error
+        error = np.sqrt(error**2 + base_error**2)
         plot_pairs(seeds1, seeds2, case, save)
         plot_individual_moves(case, dists, error, save)
         # display_dists(seeds1, seeds2, "%s movements and matching" % case, "%s_matchs.jpg" % case)
@@ -406,12 +411,12 @@ class App():
                 if self.domain is not None:
                     try:
                         self.domain[0][-1] = int(values[event])
-                    except ValueError:
+                    except (ValueError, TypeError):
                         pass
             if event == "-DOMAIN_END-":
                 try:
                     self.domain[1][-1] = int(values[event])
-                except ValueError:
+                except (ValueError, TypeError):
                     pass
             if event == "-REG_MENU-":
                 self.clear_all_params()
@@ -522,7 +527,10 @@ class App():
                self.save_registration()
             if event == "-PLOT_REG-":
                 try:
-                    self.main_window['-IMAGE-'].update(self.registration_plot_path)
+                    if "saved" not in self.registration_type:
+                        self.main_window['-IMAGE-'].update(self.registration_plot_path)
+                    else:
+                        self.update_massage("Nothing to show")
                 except Exception as e:
                     self.update_massage("Nothing to show")
             if event == "-OVERLAY-":
@@ -542,6 +550,12 @@ class App():
             if event == "-CALC_MOVE-":
                 self.create_case_dir()
                 self.calc_move()
+            if event == "-CALC_MOVE_AVERAGE-":
+                self.create_case_dir()
+                self.calc_move(calc_max=False)
+            if event == "-CALC_MOVE_CENTER-":
+                self.create_case_dir()
+                self.calc_move(only_center=True)
             if event == "-SHOW_MOVE-":
                 self.plot_name = "moves"
                 self.main_window['-IMAGE-'].update("./movement_output/{}/movements.png".format(self.case_name))
@@ -820,9 +834,12 @@ class App():
         self.seeds_tips_fixed = apply_transformation_on_seeds(self.composite_tfm,
                                                               self.seeds_tips_fixed,
                                                               "sitk")
-        self.fixed_ctrs_points = apply_sitk_transformation_on_struct(self.composite_tfm, self.fixed_ctrs_points)
-        self.rmse.append(calc_rmse(self.fixed_ctrs_points.T, self.moving_ctrs_points.T, 0.001))
-        self.param_stack.append({"RMSE": self.rmse[-1]})
+        try:
+            self.fixed_ctrs_points = apply_sitk_transformation_on_struct(self.composite_tfm, self.fixed_ctrs_points)
+            self.rmse.append(calc_rmse(self.fixed_ctrs_points.T, self.moving_ctrs_points.T, 0.001))
+            self.param_stack.append({"RMSE": self.rmse[-1]})
+        except Exception as e:
+            pass
 
     def run_sitk_registration(self, type, apply=True, domain=None, exclude=None):
         """
@@ -854,9 +871,13 @@ class App():
             self.seeds_tips_fixed = apply_transformation_on_seeds(self.tfm,
                                                                        self.seeds_tips_fixed,
                                                                        "sitk")
-            self.fixed_ctrs_points = apply_sitk_transformation_on_struct(self.tfm, self.fixed_ctrs_points)
-            self.rmse.append(calc_rmse(self.fixed_ctrs_points.T, self.moving_ctrs_points.T, 0.001))
-            self.param_stack.append({"RMSE": self.rmse})
+            if self.fixed_ctrs_points is not None and self.moving_ctrs_points is not None:
+                try:
+                    self.fixed_ctrs_points = apply_sitk_transformation_on_struct(self.tfm, self.fixed_ctrs_points)
+                    self.rmse.append(calc_rmse(self.fixed_ctrs_points.T, self.moving_ctrs_points.T, 0.001))
+                    self.param_stack.append({"RMSE": self.rmse})
+                except Exception as e:
+                    pass
         self.update_arrays("sitk")
         # print("after registration fixed: ", self.fixed_sitk.GetOrigin(), " moving: ", self.moving_sitk.GetOrigin())
         self.param_stack.append(self.registration_params)
@@ -986,7 +1007,11 @@ class App():
         :param read_im: flag to read ct
         """
         self.message = ""
+        self.show_seeds_uploader(1, visible=False)
+        self.show_seeds_uploader(2, visible=False)
+        self.show_domain_params(visible=False)
         self.rmse = [None]
+        self.assigned = False
         self.masked_moving_struct = self.masked_moving_struct_orig = None
         self.moving_ctrs_points = self.moving_ctrs_points_orig = None
         self.moving_struct = None
@@ -1013,11 +1038,9 @@ class App():
                                           "seeds as contours, please load manually"
         # self.seeds_tips_warped = self.seeds_tips_moving.copy()
         if 'RTSTRUCT' in self.moving_dict.keys():
-            self.moving_ctrs_points = read_structure(self.moving_dict['RTSTRUCT'])[0][1].T
-            # self.moving_ctrs_points_orig = self.moving_ctrs_points.copy()
-            self.moving_ctrs_points_down = down_sample_array(self.moving_ctrs_points)
-            # self.warped_ctrs_points = self.moving_ctrs_points.copy()
             try:
+                self.moving_ctrs_points = read_structure(self.moving_dict['RTSTRUCT'])[0][1].T
+                self.moving_ctrs_points_down = down_sample_array(self.moving_ctrs_points)
                 self.moving_struct = get_contour_mask(self.moving_ctrs_points.T, self.moving_dict['meta'], self.moving_array.shape)
                 self.moving_struct_sitk = sitk.Cast(sitk.GetImageFromArray(np.transpose(self.moving_struct,(2,0,1))),sitk.sitkFloat32)
                 self.masked_moving_struct = np.ma.masked_where(self.moving_struct == 0, self.moving_struct)
@@ -1043,7 +1066,11 @@ class App():
         :param read_im: flag to read ct
         """
         self.message = ""
+        self.show_seeds_uploader(1, visible=False)
+        self.show_seeds_uploader(2, visible=False)
+        self.show_domain_params(visible=False)
         self.rmse = [None]
+        self.assigned = False
         self.masked_fixed_struct = self.masked_fixed_struct_orig = None
         self.fixed_ctrs_points = self.fixed_ctrs_points_orig = None
         self.fixed_struct = None
@@ -1066,14 +1093,11 @@ class App():
             self.message = self.message + "\ndidn't find any RTPLAN to load. if you want to load " \
                                           "seeds as contours, please load manually"
         if 'RTSTRUCT' in self.fixed_dict.keys():
-            self.fixed_ctrs_points = read_structure(self.fixed_dict['RTSTRUCT'])[0][1].T
-            # self.fixed_ctrs_points_orig = self.fixed_ctrs_points.copy()
-            self.fixed_ctrs_points_down = down_sample_array(self.fixed_ctrs_points)
             try:
-                # struct = read_structure(self.fixed_dict['RTSTRUCT'])
+                self.fixed_ctrs_points = read_structure(self.fixed_dict['RTSTRUCT'])[0][1].T
+                self.fixed_ctrs_points_down = down_sample_array(self.fixed_ctrs_points)
                 self.fixed_struct = get_contour_mask(self.fixed_ctrs_points.T, self.fixed_dict['meta'], self.fixed_array.shape)
                 self.masked_fixed_struct = np.ma.masked_where(self.fixed_struct == 0, self.fixed_struct)
-                # self.masked_fixed_struct_orig = self.masked_fixed_struct.copy()
             except Exception as e:
                 print(e)
                 self.message = f"error loading contours on dicom:\n {e}"
@@ -1097,9 +1121,7 @@ class App():
         self.upload_fixed(values, read_im=False)
         self.upload_moving(values, read_im=False)
 
-        self.show_seeds_uploader(1, visible=False)
-        self.show_seeds_uploader(2, visible=False)
-        self.show_domain_params(visible=False)
+
 
     def show_manual_registration_params(self, visible=True):
         self.main_window['-XY_ROT_TEXT-'].update(visible=visible)
@@ -1279,6 +1301,7 @@ class App():
         """
         save transformation result to file
         """
+        self.create_case_dir()
         if len(self.reg_stack) > 0:
             tfm_path = f'./registration_output/{self.case_name}/transformation_{self.registration_type}'
             if self.registration_type == "Bspline" or self.registration_type == "Affine":
@@ -1326,7 +1349,7 @@ class App():
         #     overlay_contours(self.fixed_ctrs_points, moving_ctrs_points_transformed, self.case_name)
         #     self.window['-IMAGE-'].update("./registration_output/{}/icp_overlay.png".format(self.case_name))
 
-    def calc_move(self):
+    def calc_move(self, only_center=False, calc_max=True):
         """
         caculate seeds movements
         """
@@ -1338,21 +1361,23 @@ class App():
                                     f'\nSeeds number are: {self.seeds_tips_fixed.shape[-1]},'
                                     f' {self.seeds_tips_moving.shape[-1]} ')
             else:
-                self.seeds_tips_fixed = self.seeds_tips_fixed[..., self.fixed_idx]
-                self.seeds_tips_moving = self.seeds_tips_moving[..., self.moving_idx]
-                # seeds1_assigned = self.seeds_tips_fixed[..., self.fixed_idx]
-                # seeds2_assigned = self.seeds_tips_moving[..., self.moving_idx]
+                if self.assigned:
+                    self.seeds_tips_fixed = self.seeds_tips_fixed[..., self.fixed_idx]
+                    self.seeds_tips_moving = self.seeds_tips_moving[..., self.moving_idx]
+                    self.assigned = False
+                tips_idx = [1] if only_center else [0,1,2]
                 self.assignment_dists = np.array(
-                    [calc_dist(self.seeds_tips_fixed[..., i], self.seeds_tips_moving[..., i], calc_max=True)
+                    [calc_dist(self.seeds_tips_fixed[tips_idx,:, i], self.seeds_tips_moving[tips_idx,:, i], calc_max=calc_max)
                      for i in range(self.seeds_tips_moving.shape[-1])])
-                error = np.ones(len(self.assignment_dists)) * self.rmse[-1] if self.rmse[-1] is not None else None
+                error_arr = np.zeros(len(self.assignment_dists)) * self.rmse[-1] if self.rmse[-1] is not None else None
+                error = self.rmse[-1] if self.rmse[-1] is not None else 0
                 self.analyze_distances(self.case_name, self.assignment_dists, self.seeds_tips_fixed,
                                        self.seeds_tips_moving,
-                                       error, base_error=BASE_ERROR)
+                                       error_arr, base_error=BASE_ERROR)
                 self.message = 'Number of assignments - {}\n sum of distances - ' \
-                               '{:.2f}\n average distance - {:.2f}' \
+                               '{:.2f}\n average distance - {:.2f}\n total error - {:.2f}'  \
                     .format(len(self.assignment_dists), sum(self.assignment_dists),
-                            np.mean(self.assignment_dists))
+                            np.mean(self.assignment_dists), np.sqrt((error**2 + BASE_ERROR**2)))
                 self.update_massage(self.message)
                 self.show_movement_buttons()
         else:
@@ -1373,6 +1398,7 @@ class App():
                 path = values["-ASSIGN_INPUT-"]
                 self.fixed_idx, self.moving_idx = parse_lists_from_file('./list')
             self.update_massage(f'assignment is:\n{self.fixed_idx}\n{self.moving_idx}')
+            self.assigned = True
             # self.window['-MSG-'].update(font=font_text)
 
         # seeds1, seeds2, dists, errors = calculate_distances(case, seeds1, seeds2, meta_fixed, meta_moving, case_idx,

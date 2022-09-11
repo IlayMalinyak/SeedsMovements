@@ -476,11 +476,11 @@ def bspline_registration(fixed_image, moving_image, out_path, params, domain_sta
 
     # Determine the number of BSpline control points using the physical
     # spacing we want for the finest resolution control grid.
-    if 'bspline_resolution' in params.keys():
-        res = int(params['bspline_resolution']*10)
-    else:
-        res = 40
-    grid_physical_spacing = [res, res, res]
+    # if 'bspline_resolution' in params.keys():
+    #     res = int(params['bspline_resolution']*10)
+    # else:
+    #     res = 40
+    grid_physical_spacing = [40,40,40]
     image_physical_size = [size*spacing for size,spacing in zip(fixed_image.GetSize(), fixed_image.GetSpacing())]
     mesh_size = [int(image_size/grid_spacing + 0.5) \
                  for image_size,grid_spacing in zip(image_physical_size,grid_physical_spacing)]
@@ -513,6 +513,7 @@ def bspline_registration(fixed_image, moving_image, out_path, params, domain_sta
     fixed_mask.SetDirection(fixed_image.GetDirection())
     domain_start = [0,0,0] if domain_start is None else domain_start
     domain_end = [s - 1 for s in fixed_image.GetSize()] if domain_end is None else domain_end
+    print(domain_start, domain_end)
     # if domain_start is not None and domain_end is not None:
     fixed_mask[domain_start[1]:domain_end[1], domain_start[0]:domain_end[0], domain_start[2]:domain_end[2]] = 1
     # else:
