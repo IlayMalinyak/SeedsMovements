@@ -10,10 +10,12 @@ import shutil
 import pandas as pd
 import registration
 from SimpleITK import Euler3DTransform, GetArrayFromImage, GetImageFromArray
-from scipy.ndimage import binary_dilation, generate_binary_structure
+from scipy.ndimage import binary_dilation, generate_binary_structure, binary_fill_holes
 from scipy.spatial.transform import Rotation
-from scipy.optimize import linear_sum_assignment
+from scipy.optimize import linear_sum_assignment, linprog
+from scipy.spatial import cKDTree, Delaunay, ConvexHull
 from matplotlib import pyplot as plt
+from tqdm import tqdm
 
 
 SEED_LENGTH_MM = 10
@@ -465,7 +467,7 @@ def convert_dcm_to_pixel(dcm_coords, meta):
     dicom_cord = np.vstack((dcm_coords, np.ones(dcm_coords.shape[1])))
     pixel_cord = np.abs(np.linalg.inv(M) @ dicom_cord)
     # pixel_cord[2,:] = num_slices - pixel_cord[2, :]
-    return pixel_cord[:3]
+    return pixel_cord[:3].astype(np.int16)
 
 def get_seeds_tips_pixels(seeds_tips_dcm, meta):
     """
@@ -498,7 +500,8 @@ def get_contour_mask(arr, meta, shape, flip_z=True):
         arr[2,:] = abs(shape[2] - abs(arr[2,:]))
     else:
         arr[2,:] = abs(arr[2,:])
-    # arr[2,:] -= shape[2]
+    idx = arr[2] < shape[2]
+    arr = arr[:,idx]
     mask = np.zeros(shape)
     mask[arr[1],arr[0], arr[2]] = 1
     return mask
@@ -790,7 +793,7 @@ def calc_rmse(pt1, pt2, pct):
     return err if err is not None else 0
 
 
-def iou_contours(ctr1, ctr2):
+def iou_contours(ctr1, ctr2, full=True):
     """
     caluclate 3d iou between two point set
     :param ctr1: 3xN array
@@ -801,10 +804,196 @@ def iou_contours(ctr1, ctr2):
     maxs = np.hstack((np.max(ctr1, axis=-1)[...,None], np.max(ctr2, axis=-1)[...,None]))
     intersection = np.min(maxs, axis=1) - np.max(mins, axis=1)
     intersection_vol = max((intersection[0]*intersection[1]*intersection[2], 0))
-    union = np.max(maxs, axis=1) - np.min(mins, axis=1)
+    union = np.max(maxs, axis=1) - np.min(mins, axis=1) if full else np.max(ctr1, axis=-1) - np.min(ctr1, axis=-1)
     union_vol = union[0]*union[1]*union[2]
     return intersection_vol / union_vol
 
+
+def normalize(vec):
+    n = np.linalg.norm(vec)
+    if n == 0:
+        return vec
+    return vec / n
+
+
+def draw_circle_3d(start_point, end_point, radius):
+    direction = normalize(end_point - start_point)
+    zeros_in_direction = np.where(direction == 0)[0]
+    vec1, vec2 = np.zeros_like(direction), np.zeros_like(direction)
+    if len(zeros_in_direction) == 2:
+        vec1[zeros_in_direction[0]] = 1
+        vec2[zeros_in_direction[1]] = 1
+    else:
+        sorted_direction = np.argsort(direction)
+        vec1 = np.zeros_like(direction)
+        vec1[sorted_direction[1]] = -direction[sorted_direction[2]]
+        vec1[sorted_direction[2]] = direction[sorted_direction[1]]
+        vec1 = normalize(vec1)
+        # vec1 = normalize(np.array([0,0,-direction[2]])) if 2 not in zeros_in_direction else normalize(np.array([-direction[0],0,0]))
+        vec2 = normalize(np.cross(direction, vec1))
+    try:
+        assert np.dot(direction, vec1) == np.dot(vec1, vec2) == np.dot(direction, vec2) == 0
+    except AssertionError:
+        pass
+
+    # print("spanning vector are not perpendicular. dot is ", np.dot(direction, vec1), np.dot(vec1, vec2), np.dot(direction, vec2))
+    x_ = np.linspace(start_point[0], end_point[0], 30)
+    y_ = np.linspace(start_point[1], end_point[1], 30)
+    z_ = np.linspace(start_point[2], end_point[2], 30)
+    x, y, z = np.meshgrid(x_, y_, z_)
+    mesh = np.array((x,y,z))
+    theta = np.linspace(0, 2*np.pi, 15)[...,None]
+    circle = start_point + radius*np.cos(theta)*(vec1[None,...]) + radius*np.sin(theta)*(vec2[None, ...])
+    return vec1, vec2, circle
+
+
+def get_dose_coords(seeds_tips, full=False, max_iter=40):
+    """
+    create dose coordinates. currently dose is a zero-approximation of TG43 - it is simply a 2mm radius cylinder wrapping
+    the seed from start_of_seed - 1.5mm to end_of_seed +1.5 mm
+    :param max_iter: maximum iterations per seed
+    :param seeds_tips: 3X3XN array of seeds. the first axis represent number of
+    points in the object (start, center, end), second axis represent x,y,z and the third axis represent the number of
+    objects
+    :return: NX3 array of dose coordinates
+    """
+    tot_dose = np.zeros((0,3))
+    max_r = 2
+    # fig = plt.figure()
+    # ax = fig.add_subplot(projection='3d')
+    for i in range(seeds_tips.shape[-1]):
+        s = seeds_tips[:,:,i]
+
+        # if i == 14:
+        #     plt.plot(s[0], s[1], s[2])
+        direction = normalize(s[2,:] - s[0,:])
+        start = s[0,:] - 1.5*direction
+        end = s[2,:] + 1.5*direction
+        # ax.scatter(start[0], start[1], start[2], color='r')
+        # ax.scatter(end[0], end[1], end[2], color='black')
+        rs = np.linspace(0.2, max_r, 3) if full else [max_r]
+        cylinder = np.zeros((0,3))
+        iter = 0
+        last = np.sqrt(np.sum(start - end)**2)
+        while np.sqrt(np.sum(start - end)**2) > 0.1:
+            if iter == max_iter:
+                break
+            dist = np.sqrt(np.sum(start - end)**2)
+            if dist > last:
+                break
+            disk = np.zeros((0,3))
+            for r in rs:
+                vec1, vec2, circle = draw_circle_3d(start, end, max_r)
+                disk = np.vstack([disk, circle])
+            cylinder = np.vstack([cylinder,disk])
+            iter += 1
+            last = dist
+            start += direction*0.5
+            # print(start)
+            # if i == 14:
+            # ax.scatter(start[0], start[1], start[2], color='r')
+            # ax.scatter(end[0], end[1], end[2], color='black')
+            # ax.scatter(cylinder[0], cylinder[1], cylinder[2], color='orange')
+            # plt.show()
+        tot_dose = np.vstack([tot_dose, cylinder])
+        # print(len(cylinder))
+    # ax = plot_seeds(seeds_tips)
+    # ax.scatter(tot_dose[:,0], tot_dose[:,1], tot_dose[:,2], color='g', alpha=0.03)
+    # plt.show()
+    return tot_dose
+
+
+def dose_mask(dose_coords, shape, meta):
+    mask = np.zeros(shape)
+    dose_coords_pixels = convert_dcm_to_pixel(dose_coords, meta)
+    mask[dose_coords_pixels[0], dose_coords_pixels[1], dose_coords_pixels[2]] = 1
+    return binary_fill_holes(mask)
+
+
+def dose_mask_intersection(dose1, dose2, shape, meta):
+    mask1, mask2 = dose_mask(dose1, shape ,meta), dose_mask(dose2, shape ,meta)
+    return len(np.where(np.logical_and(mask1, mask2))[0]) / len(np.where(mask1)[0])
+
+
+def dose_intersection_ratio(dose1, dose2, res):
+    delaunay = Delaunay(dose2)
+    simplex = delaunay.find_simplex(dose1)
+    in_coords = dose1[simplex != -1]
+    out_coords = dose1[simplex == -1]
+    target_tree = cKDTree(dose2, leafsize=10)
+    dist = target_tree.query(out_coords)[0]
+    small_dist = out_coords[dist < res]
+    print("only inside ", len(in_coords) / len(dose1))
+    print("outside but close", len(small_dist) / len(dose1))
+    # fig = plt.figure()
+    # ax = fig.add_subplot(projection='3d')
+    # ax.scatter(delaunay.points[:, 0], delaunay.points[:, 1], delaunay.points[:, 2], alpha=0.01)
+    # ax.scatter(in_coords[:, 0], in_coords[:, 1], in_coords[:, 2], alpha=0.01)
+    # ax.scatter(out_coords[:, 0], out_coords[:, 1], out_coords[:, 2], alpha=0.01, color='cyan')
+    # plt.show()
+    return (len(in_coords) + len(small_dist)) / len(dose1)
+    # in_dose1 = in_hull(dose2, dose1.T)
+    # for i in tqdm(range(len(dose1))):
+    #     p = dose1[i]
+    #     if delaunay.find_simplex(p):
+    #         in_coords.append(p)
+        # elif dist[i] < res:
+        #     print("")
+        #     in_coords.append(p)
+        # else:
+        #     print("")
+    #     for s in range(seeds1.shape[-1]):
+    #         s_dose = get_dose_coords(seeds1[...,s][...,None])
+    #         delaunay = Delaunay(s_dose)
+    #         convex = ConvexHull(s_dose)
+    #         fig = plt.figure()
+    #         ax = fig.add_subplot(projection='3d')
+    #         ax.scatter(s_dose[:,0], s_dose[:,1], s_dose[:,2])
+    #         # ax.scatter(convex.points[:, 0], convex.points[:, 1], convex.points[:, 2], alpha=0.1)
+    #         ax.scatter(delaunay.points[:, 0], delaunay.points[:, 1], delaunay.points[:, 2], alpha=0.1)
+    #
+    #         plt.show()
+    in_coords = np.array(in_coords)
+    # convex = delaunay.convex_hull
+
+
+    # ax.scatter(dose2[:, 0], dose2[:, 1], dose2[:, 2], alpha=0.01)
+    # ax.scatter(dose1[close_enough[0],0], dose1[close_enough[0],1], dose1[close_enough[0],2])
+    #
+    # #
+    plt.show()
+    # inter = 0
+    # for i in range(dose2.shape[0]):
+    #     if delaunay.find_simplex(dose2[i]):
+    #         inter += 1
+    return len(in_coords) / len(dose1)
+
+
+def in_hull(points, x):
+    n_points = len(points)
+    n_dim = len(x)
+    c = np.zeros(n_points)
+    A = np.r_[points.T,np.ones((1,n_points))]
+    b = np.r_[x, np.ones(1)]
+    lp = linprog(c, A_eq=A, b_eq=b)
+    return lp.success
+
+def get_in_coords(points, seeds):
+    in_coords = np.zeros((0, 3))
+    for s in range(seeds.shape[-1]):
+        if len(points) == 0:
+            break
+        dose = get_dose_coords(seeds[...,s][...,None])
+        delaunay = Delaunay(dose)
+        # fig = plt.figure()
+        # ax = fig.add_subplot(projection='3d')
+        # ax.scatter(points[:, 0], points[:, 1], points[:, 2], alpha=0.1)
+        # ax.scatter(delaunay.points[:, 0], delaunay.points[:, 1], delaunay.points[:, 2])
+        # plt.show()
+        simplex = delaunay.find_simplex(points)
+        in_coords = np.vstack([in_coords, points[simplex != -1]])
+        points = points[simplex == -1]
+    return in_coords
 
 
 

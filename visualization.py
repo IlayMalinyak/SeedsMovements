@@ -420,6 +420,38 @@ def plot_pairs(seeds1, seeds2, case, save=True):
         plt.savefig("./movement_output/%s/pairs.png" % (case))
     plt.close()
 
+def plot_pairs_with_dose(seeds1, seeds2, dose1, dose2, case, alpha=0.01, save=True):
+    """
+    plot seeds pairs
+    :param seeds1: (3,3,N) array of first seeds. the first axis represent 3 tips (start, middle,end). the second axis represent
+            3 coordinates (x,y,z)
+    :param seeds2: (3,3,N) array of second seeds.
+    :param case: case name
+    :param save: flag for saving. if True - .png file will be saved on './movement_output/<case>/pairs.png
+
+    """
+    fig = plt.figure()
+    ax = fig.add_subplot(projection='3d')
+    n = seeds1.shape[-1]
+    for i in range(n):
+        ax.plot([seeds1[0,0, i], seeds1[2,0, i]], [seeds1[0,1, i], seeds1[2,1, i]], [seeds1[0,2, i], seeds1[2,2, i]], color='b')
+        ax.plot([seeds2[0,0, i], seeds2[2,0, i]], [seeds2[0,1, i], seeds2[2,1, i]], [seeds2[0,2, i], seeds2[2,2, i]], color='orange')
+        ax.plot([seeds1[1,0, i], seeds2[1,0, i]], [seeds1[1,1, i], seeds2[1,1, i]], [seeds1[1,2, i], seeds2[1,2, i]], color='green', alpha=0.5,
+                linestyle='--')
+        ax.scatter(dose1[:, 0], dose1[:, 1], dose1[:, 2], alpha=alpha, color='b', label='1')
+        ax.scatter(dose2[:, 0], dose2[:, 1], dose2[:, 2], alpha=alpha, color='orange', label='2')
+    ax.set_title(case)
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_zlabel('z')
+    fixed_patch = mpatches.Patch(color='b', label='Fixed Seeds')
+    moving_patch = mpatches.Patch(color='orange', label='Moving Seeds')
+    plt.legend(handles=[fixed_patch, moving_patch])
+
+    if save:
+        plt.savefig("./movement_output/%s/pairs_dose.png" % (case))
+    plt.close()
+
 
 def plot_pairs_with_outliers(seeds1, seeds2, outliers_idx, case, save=True):
     """
@@ -592,7 +624,7 @@ def plot_seeds_and_contour_interactive(seeds1, seeds2, ctr):
     fig = plot_seeds_interactive(fig, seeds2, "Seeds 2", "orange")
     fig['layout'].update(height=600, width=800, title="contours overlay")
     print("sohwing plotly figure")
-    fig.write_html('contours_overlay.html', auto_open=True)
+    fig.write_html('seeds_and_contour.html', auto_open=True)
     # fig.show()
 
 def plot_rmse(rmse, path, save=True):

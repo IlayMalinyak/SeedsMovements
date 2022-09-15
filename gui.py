@@ -100,35 +100,36 @@ class App():
             [sg.Text('Registration', font=font_header)],
             [sg.Text("Registration Type", font=font_text), sg.Combo(['Use saved Registration', 'Affine', 'Bspline', "Affine+Bspline",
                                                                      "ICP", "CPD"], enable_events=True, font=font_text, key="-REG_MENU-")],
-            [sg.Text('Optimizer', key='-OPT_TEXT-', visible=False),
-             sg.Combo(['LBFGS2', 'Gradient Decent'], key='-OPT_MENU-', visible=False, enable_events=True),
-             sg.Text('Metric', key='-METRIC_TEXT-', visible=False),
-             sg.Combo(['Mean Squares', 'Mutual information'], key='-METRIC_MENU-', visible=False, enable_events=True)],
-             [sg.Text('Optimizer 2', key='-OPT_TEXT_2-', visible=False),
-              sg.Combo(['LBFGS2', 'Gradient Decent'], key='-OPT_MENU_2-', visible=False, enable_events=True),
-              sg.Text('Metric 2', key='-METRIC_TEXT_2-', visible=False),
-              sg.Combo(['Mean Squares', 'Mutual information'], key='-METRIC_MENU_2-', visible=False, enable_events=True),],
-             [sg.Text('Sampling percentage (0-1)', key='-GLOBAL_PARAM_TEXT_1-', visible=False),
-             sg.InputText(size=(6, 1), visible=False, key='-GLOBAL_PARAM_1-', enable_events=True),
-             sg.Text('Number of Iterations', key='-GLOBAL_PARAM_TEXT_2-', visible=False),
-             sg.InputText(size=(6, 1), visible=False, key='-GLOBAL_PARAM_2-', enable_events=True),
+            [sg.pin(sg.Text('Optimizer', key='-OPT_TEXT-', visible=False, ),shrink=True),
+             sg.pin(sg.Combo(['LBFGS2', 'Gradient Decent'], key='-OPT_MENU-', visible=False, enable_events=True),shrink=True),
+             sg.pin(sg.Text('Metric', key='-METRIC_TEXT-', visible=False),shrink=True),
+             sg.pin(sg.Combo(['Mean Squares', 'Mutual information'], key='-METRIC_MENU-', visible=False, enable_events=True)
+             ,shrink=True)],
+             [sg.pin(sg.Text('Optimizer 2', key='-OPT_TEXT_2-', visible=False),shrink=True),
+              sg.pin(sg.Combo(['LBFGS2', 'Gradient Decent'], key='-OPT_MENU_2-', visible=False, enable_events=True),shrink=True),
+              sg.pin(sg.Text('Metric 2', key='-METRIC_TEXT_2-', visible=False),shrink=True),
+              sg.pin(sg.Combo(['Mean Squares', 'Mutual information'], key='-METRIC_MENU_2-', visible=False, enable_events=True),
+              shrink=True)],
+             [sg.pin(sg.Text('Sampling percentage (0-1)', key='-GLOBAL_PARAM_TEXT_1-', visible=False), shrink=True),
+             sg.pin(sg.InputText(size=(6, 1), visible=False, key='-GLOBAL_PARAM_1-', enable_events=True),shrink=True),
+             sg.pin(sg.Text('Number of Iterations', key='-GLOBAL_PARAM_TEXT_2-', visible=False, expand_y=True),shrink=True),
+             sg.pin(sg.InputText(size=(6, 1), visible=False, key='-GLOBAL_PARAM_2-', enable_events=True),shrink=True),
              ],
             [
-
-             sg.Text('Sampling 2', key='-SAMPLE_TEXT_2-', visible=False),
-              sg.InputText(size=(6, 1), visible=False, key='-SAMPLE_2-', enable_events=True),
-             sg.Text('Number of Iterations 2', key='-NUM_ITER_2_TEXT-', visible=False),
-             sg.InputText(size=(6, 1), visible=False, key='-NUM_ITER_2-', enable_events=True),
-            sg.Text('Bspline res (cm)', key='-BSPLINE_RES_TEXT-', visible=False),
-            sg.InputText(size=(6, 1), visible=False, key='-BSPLINE_RES-', enable_events=True)
+             sg.pin(sg.Text('Sampling 2', key='-SAMPLE_TEXT_2-', visible=False, expand_y=True),shrink=True),
+              sg.pin(sg.InputText(size=(6, 1), visible=False, key='-SAMPLE_2-', enable_events=True),shrink=True),
+             sg.pin(sg.Text('Number of Iterations 2', key='-NUM_ITER_2_TEXT-', visible=False, expand_y=True),shrink=True),
+             sg.pin(sg.InputText(size=(6, 1), visible=False, key='-NUM_ITER_2-', enable_events=True),shrink=True),
+            sg.pin(sg.Text('Bspline res (cm)', key='-BSPLINE_RES_TEXT-', visible=False ,expand_y=True),shrink=True),
+            sg.pin(sg.InputText(size=(6, 1), visible=False, key='-BSPLINE_RES-', enable_events=True),shrink=True)
             ],
             [
-             sg.Text('Convergence Tolerance', key='-GLOBAL_PARAM_TEXT_3-', visible=False),
-             sg.InputText(size=(6, 1), visible=False, key='-GLOBAL_PARAM_3-', enable_events=True)
-             ,sg.Text('Solution accuracy', key='-LBFGS2_PARAM_TEXT_1-', visible=False),
-             sg.InputText(size=(6, 1), visible=False, key='-LBFGS2_PARAM_1-', enable_events=True),
-             sg.Text('Learning Rate', key='-GD_PARAM_TEXT_1-', visible=False),
-             sg.InputText(size=(6, 1), visible=False, key='-GD_PARAM_1-', enable_events=True),
+             sg.pin(sg.Text('Convergence Tolerance', key='-GLOBAL_PARAM_TEXT_3-', visible=False),shrink=True),
+             sg.pin(sg.InputText(size=(6, 1), visible=False, key='-GLOBAL_PARAM_3-', enable_events=True),shrink=True)
+             ,sg.pin(sg.Text('Solution accuracy', key='-LBFGS2_PARAM_TEXT_1-', visible=False),shrink=True),
+             sg.pin(sg.InputText(size=(6, 1), visible=False, key='-LBFGS2_PARAM_1-', enable_events=True),shrink=True),
+             sg.pin(sg.Text('Learning Rate', key='-GD_PARAM_TEXT_1-', visible=False),shrink=True),
+             sg.pin(sg.InputText(size=(6, 1), visible=False, key='-GD_PARAM_1-', enable_events=True),shrink=True)
              ],
             [sg.Text("Contours Source", key='-GET_CONTOURS_TEXT-', visible=False),
              sg.Combo(['dcm file', 'csv file', 'Auto Segmentation'], key='-CONTOURS_MENU-', visible=False, enable_events=True),
@@ -154,18 +155,18 @@ class App():
             font=font_text, key='-MANUAL_REGISTRATION-'), sg.Button("Save registration",
             font=font_text, key='-SAVE_REGISTRATION-'), sg.Button("Clear registrations",
             font=font_text, key='-CLEAR_REGISTRATION-')],
-            [sg.Text("xy(axial) rotation", key='-XY_ROT_TEXT-', visible=False),
-             sg.InputText(size=(5, 1), visible=False, key='-XY_ROT-', enable_events=True),
-             sg.Text("xz(coronal) rotation", key='-XZ_ROT_TEXT-', visible=False),
-             sg.InputText(size=(5, 1), visible=False, key='-XZ_ROT-', enable_events=True),
-             sg.Text("yz(sagittal) rotation", key='-YZ_ROT_TEXT-', visible=False),
-             sg.InputText(size=(5, 1), visible=False, key='-YZ_ROT-', enable_events=True)],
-             [sg.Text("x shift", key='-X_SHIFT_TEXT-', visible=False),
-             sg.InputText(size=(5, 1), visible=False, key='-X_SHIFT-', enable_events=True),
-             sg.Text("y shift", key='-Y_SHIFT_TEXT-', visible=False),
-             sg.InputText(size=(5, 1), visible=False, key='-Y_SHIFT-', enable_events=True),
-             sg.Text("z shift", key='-Z_SHIFT_TEXT-', visible=False),
-             sg.InputText(size=(5, 1), visible=False, key='-Z_SHIFT-', enable_events=True)],
+            [sg.pin(sg.Text("xy(axial) rotation", key='-XY_ROT_TEXT-', visible=False),shrink=True),
+             sg.pin(sg.InputText(size=(5, 1), visible=False, key='-XY_ROT-', enable_events=True),shrink=True),
+             sg.pin(sg.Text("xz(coronal) rotation", key='-XZ_ROT_TEXT-', visible=False),shrink=True),
+             sg.pin(sg.InputText(size=(5, 1), visible=False, key='-XZ_ROT-', enable_events=True),shrink=True),
+             sg.pin(sg.Text("yz(sagittal) rotation", key='-YZ_ROT_TEXT-', visible=False),shrink=True),
+             sg.pin(sg.InputText(size=(5, 1), visible=False, key='-YZ_ROT-', enable_events=True),shrink=True)],
+             [sg.pin(sg.Text("x shift", key='-X_SHIFT_TEXT-', visible=False),shrink=True),
+             sg.pin(sg.InputText(size=(5, 1), visible=False, key='-X_SHIFT-', enable_events=True),shrink=True),
+             sg.pin(sg.Text("y shift", key='-Y_SHIFT_TEXT-', visible=False),shrink=True),
+             sg.pin(sg.InputText(size=(5, 1), visible=False, key='-Y_SHIFT-', enable_events=True),shrink=True),
+             sg.pin(sg.Text("z shift", key='-Z_SHIFT_TEXT-', visible=False),shrink=True),
+             sg.pin(sg.InputText(size=(5, 1), visible=False, key='-Z_SHIFT-', enable_events=True),shrink=True)],
             [sg.VPush()],
             [sg.VPush()],
             [sg.Button("Show Registration Metric", font=font_text, key='-PLOT_REG-')],
@@ -193,7 +194,9 @@ class App():
             font=font_text, key='-SHOW_PAIRS-', visible=False), sg.Button("Show Pairs interactive",
             font=font_text, key='-SHOW_PAIRS_INTERACTIVE-', visible=False),
              sg.Button("Exclude Seeds", font=font_text, key='-EXCLUDE_WIN-', visible=False)],
-             [sg.Button("Save results to csv", font=font_text, key='-SAVE-', visible=False)],
+             [sg.Button("Dose change", font=font_text, key='-DOSE_LOSS-', visible=False),
+              sg.Button("Show dose", font=font_text, key='-SHOW_DOSE-', visible=False),
+              sg.Button("Save results to csv", font=font_text, key='-SAVE-', visible=False)],
             [sg.HSeparator()],
             [sg.VPush()],
             [sg.VPush()],
@@ -218,7 +221,7 @@ class App():
 
         layout = [
             [
-             sg.Column(data_column, vertical_alignment='top', element_justification='c'),
+             sg.pin(sg.Column(data_column, vertical_alignment='top', element_justification='c'), expand_y=True, shrink=True),
              sg.VSeperator(),
              sg.Column(img_column, element_justification='c'),
             sg.VSeperator(),
@@ -255,9 +258,13 @@ class App():
         self.fixed_struct = None
         self.fixed_struct_sitk = None
 
-        self.reg_stack = []
-        self.tfm_stack = []
-        self.param_stack = []
+        self.fixed_dose = None
+        self.moving_dose = None
+        self.dose_loss = None
+
+        self.reg_stack = [None]
+        self.tfm_stack = [None]
+        self.param_stack = [None]
         self.registration_type = None
         self.registration_params = {}
         self.euler_angles = np.zeros(3)
@@ -290,7 +297,7 @@ class App():
 
         self.df_features = ["Timestamp", "Experiment", "Registration Method", "Optimizer", "Metric", "Number Of Iterations", "Learning Rate",
                             "Accuracy Threshold", "Convergence Delta", "RMSE (mm)", "% Correspondence set","Average Movement (mm)", "Median Movement (mm)",
-                            "Standard Deviation (mm)", "Maximum Movement (mm)"]
+                            "Standard Deviation (mm)", "Maximum Movement (mm)", "Dose change (%)", "total error (mm)"]
         self.init_param_dict()
         self.message = ""
 
@@ -564,6 +571,14 @@ class App():
                 self.main_window['-IMAGE-'].update("./movement_output/{}/pairs.png".format(self.case_name))
             if event == "-SHOW_PAIRS_INTERACTIVE-":
                 plot_seeds_and_contour_interactive(self.seeds_tips_fixed, self.seeds_tips_moving, self.moving_ctrs_points)
+            if event == "-SHOW_DOSE-":
+                if self.fixed_dose is not None and self.moving_dose is not None:
+                    self.main_window['-IMAGE-'].update("./movement_output/{}/pairs_dose.png".format(self.case_name))
+                else:
+                    self.update_massage("Nothing to show")
+            if event == "-DOSE_LOSS-":
+                self.calc_dose_loss()
+                self.update_massage(self.message)
             if event == "-SAVE-":
                 self.save_results_to_csv()
 
@@ -578,7 +593,6 @@ class App():
             #     self.moving_viewer = DicomCanvas(self.moving_array, self.window['-MOVING_CANVAS-'].TKCanvas)
             if event == sg.WIN_CLOSED or event == 'Exit':
                 break
-
 
     def update_massage(self, massage):
         """
@@ -624,64 +638,67 @@ class App():
         image to the fixed frame of reference and seeds and contour to the moving frame of reference
         """
         if self.registration_type is not None:
-            if self.fixed_array is not None and self.moving_array is not None:
-                if self.case_name is not None:
-                    # domain = True if self.domain is not None else False
-                    self.message = "Registering...\nThis may take a while"
-                    self.update_massage(self.message)
-                    self.main_window.refresh()
-                    if self.registration_type == "Bspline" or self.registration_type == "Affine":
-                        seeds_pix = None if self.registration_type == "Affine" else get_all_seeds_pixels(self.seeds_tips_fixed,
-                                                                             self.fixed_dict['meta'],
-                                                                             self.fixed_array.shape)
-                        self.run_sitk_registration(self.registration_type, domain=self.domain, exclude=seeds_pix)
-                    elif self.registration_type == "Affine+Bspline":
-                        self.run_composite_sitk_registration(["Affine", "Bspline"])
-                    elif self.registration_type =='ICP':
-                        self.run_adaptive_icp()
-                        self.tfm = self.tfm if self.tfm is not None else np.eye(4)
-                        # self.moving_array = wrap_image_with_matrix(self.fixed_array, self.moving_array,
-                        #                                            self.meta, np.linalg.inv(self.inv_tfm))
-                        # self.warped_array = affine_transform(self.warped_array, self.tfm)
-                        # self.update_arrays("icp")
-                    elif self.registration_type == "CPD":
-                        self.run_probreg_registration()
+            try:
+                if self.fixed_array is not None and self.moving_array is not None:
+                    if self.case_name is not None:
+                        # domain = True if self.domain is not None else False
+                        self.message = "Registering...\nThis may take a while"
+                        self.update_massage(self.message)
+                        self.main_window.refresh()
+                        if self.registration_type == "Bspline" or self.registration_type == "Affine":
+                            seeds_pix = None if self.registration_type == "Affine" else get_all_seeds_pixels(self.seeds_tips_fixed,
+                                                                                 self.fixed_dict['meta'],
+                                                                                 self.fixed_array.shape)
+                            self.run_sitk_registration(self.registration_type, domain=self.domain, exclude=seeds_pix)
+                        elif self.registration_type == "Affine+Bspline":
+                            self.run_composite_sitk_registration(["Affine", "Bspline"])
+                        elif self.registration_type =='ICP':
+                            self.run_adaptive_icp()
+                            self.tfm = self.tfm if self.tfm is not None else np.eye(4)
+                            # self.moving_array = wrap_image_with_matrix(self.fixed_array, self.moving_array,
+                            #                                            self.meta, np.linalg.inv(self.inv_tfm))
+                            # self.warped_array = affine_transform(self.warped_array, self.tfm)
+                            # self.update_arrays("icp")
+                        elif self.registration_type == "CPD":
+                            self.run_probreg_registration()
 
-                    elif self.registration_type =='manual':
-                        self.tfm = self.run_manual_registration()
-                        # self.moving_array = wrap_image_with_matrix(self.fixed_array, self.moving_array,
-                        #                                            self.tfm.as_matrix())
-                        # self.moving_array = self.warped_moving
-                    elif self.registration_type.split("_")[0] == "saved":
-                        self.run_saved_registration()
-                        # try:
-                        #     self.warped_sitk = warp_image_sitk(self.fixed_sitk, self.moving_sitk, self.tfm)
-                        #     self.update_arrays("sitk")
-                        #     # print("**saved**")
-                        #     # print("fixed ", self.fixed_array.shape, " moving ", self.moving_array.shape, "warped ",
-                        #     #       self.warped_moving.shape)
-                        # except Exception as e:
-                        #     print("moving to icp")
-                        #     print(e)
-                        #     self.warped_array = wrap_image_with_matrix(self.fixed_array, self.warped_array, self.meta,
-                        #                                                 self.tfm)
-                        #     self.update_arrays("icp")
-                    self.reg_stack.append(self.registration_type)
-                    self.tfm_stack.append(self.tfm)
-                    self.set_meta()
-                    # print(self.tfm)
-                    # print(self.moving_dict['meta'])
+                        elif self.registration_type =='manual':
+                            self.tfm = self.run_manual_registration()
+                            # self.moving_array = wrap_image_with_matrix(self.fixed_array, self.moving_array,
+                            #                                            self.tfm.as_matrix())
+                            # self.moving_array = self.warped_moving
+                        elif self.registration_type.split("_")[0] == "saved":
+                            self.run_saved_registration()
+                            # try:
+                            #     self.warped_sitk = warp_image_sitk(self.fixed_sitk, self.moving_sitk, self.tfm)
+                            #     self.update_arrays("sitk")
+                            #     # print("**saved**")
+                            #     # print("fixed ", self.fixed_array.shape, " moving ", self.moving_array.shape, "warped ",
+                            #     #       self.warped_moving.shape)
+                            # except Exception as e:
+                            #     print("moving to icp")
+                            #     print(e)
+                            #     self.warped_array = wrap_image_with_matrix(self.fixed_array, self.warped_array, self.meta,
+                            #                                                 self.tfm)
+                            #     self.update_arrays("icp")
+                        self.reg_stack.append(self.registration_type)
+                        self.tfm_stack.append(self.tfm)
+                        self.set_meta()
+                        # print(self.tfm)
+                        # print(self.moving_dict['meta'])
+                    else:
+                        self.update_massage("Enter Experiment Name")
+                    if self.tfm is not None:
+                        self.message = self.message + f"\n{self.registration_type} registration finished\n RMSE: {self.rmse[-1]}"
+                        self.update_massage(self.message)
+                        self.shift = np.array([0, 0, 0])
+                        self.euler_angles = np.array([0, 0, 0])
                 else:
-                    self.update_massage("Enter Experiment Name")
-            else:
-                self.update_massage("You must upload 2 DICOMS to perform registration")
+                    self.update_massage("You must upload 2 DICOMS to perform registration")
+            except Exception as e:
+                self.update_massage(f"registration failed: \n {e}")
         else:
             self.update_massage("No Registration to run")
-        if self.tfm is not None:
-            self.message = self.message + f"\n{self.registration_type} registration finished\n RMSE: {self.rmse[-1]}"
-            self.update_massage(self.message)
-            self.shift = np.array([0, 0, 0])
-            self.euler_angles = np.array([0, 0, 0])
         return
 
     def run_probreg_registration(self):
@@ -1012,6 +1029,8 @@ class App():
         self.show_domain_params(visible=False)
         self.rmse = [None]
         self.assigned = False
+        self.moving_dose = None
+        self.reg_stack = [None]
         self.masked_moving_struct = self.masked_moving_struct_orig = None
         self.moving_ctrs_points = self.moving_ctrs_points_orig = None
         self.moving_struct = None
@@ -1071,6 +1090,8 @@ class App():
         self.show_domain_params(visible=False)
         self.rmse = [None]
         self.assigned = False
+        self.fixed_dose = None
+        self.reg_stack = [None]
         self.masked_fixed_struct = self.masked_fixed_struct_orig = None
         self.fixed_ctrs_points = self.fixed_ctrs_points_orig = None
         self.fixed_struct = None
@@ -1253,6 +1274,8 @@ class App():
         self.main_window['-SHOW_PAIRS-'].update(visible=True)
         self.main_window['-SHOW_PAIRS_INTERACTIVE-'].update(visible=True)
         self.main_window['-EXCLUDE_WIN-'].update(visible=True)
+        self.main_window['-DOSE_LOSS-'].update(visible=True)
+        self.main_window['-SHOW_DOSE-'].update(visible=True)
         self.main_window['-SAVE-'].update(visible=True)
 
     def use_saved_transformation(self):
@@ -1374,14 +1397,30 @@ class App():
                 self.analyze_distances(self.case_name, self.assignment_dists, self.seeds_tips_fixed,
                                        self.seeds_tips_moving,
                                        error_arr, base_error=BASE_ERROR)
-                self.message = 'Number of assignments - {}\n sum of distances - ' \
-                               '{:.2f}\n average distance - {:.2f}\n total error - {:.2f}'  \
+
+                self.message = 'Number of assignments : {}\n sum of distances : ' \
+                               '{:.2f}\n average distance (mm) : {:.2f}' \
+                               '\n total error (mm) : {:.2f}'  \
                     .format(len(self.assignment_dists), sum(self.assignment_dists),
                             np.mean(self.assignment_dists), np.sqrt((error**2 + BASE_ERROR**2)))
                 self.update_massage(self.message)
                 self.show_movement_buttons()
         else:
             self.update_massage("Please assign pair first")
+
+    def calc_dose_loss(self):
+
+        self.update_massage("calculating dose change...")
+        self.calc_dose()
+        plot_pairs_with_dose(self.seeds_tips_fixed, self.seeds_tips_moving, self.fixed_dose, self.moving_dose,
+                             self.case_name)
+        inter = dose_intersection_ratio(self.fixed_dose, self.moving_dose, 0.9)
+        print("dose intersection ", inter)
+        print("iou ", iou_contours(self.fixed_dose.T, self.moving_dose.T))
+        print("iou not full", iou_contours(self.fixed_dose.T, self.moving_dose.T, full=False))
+        self.dose_loss = 1 - inter
+        self.message = "Dose change (%) : {:.2f}".format(self.dose_loss*100)
+        self.update_massage(self.message)
 
     def assign_seeds(self, values):
         """
@@ -1406,22 +1445,25 @@ class App():
 
     def save_results_to_csv(self):
         try:
-            reg_stack = None if len(self.reg_stack) == 0 else ','.join([str(i) for i in self.reg_stack])
-            rmse = None if len(self.rmse) == 1 else ','.join([str(i) for i in self.rmse[1:]])
+            # reg_stack = [None] if len(self.reg_stack) == 0 else ','.join([str(i) for i in self.reg_stack])
+            rmse = self.rmse[-1] if self.rmse[-1] is not None else 0
+            total_error = np.sqrt(rmse**2 + BASE_ERROR**2)
             # print(self.rmse, self.correspondence)
             df = pd.DataFrame({self.df_features[0]: pd.to_datetime('today'), self.df_features[1]: self.case_name,
-                               self.df_features[2]: reg_stack,
+                               self.df_features[2]: self.reg_stack[-1],
                                self.df_features[3]: self.registration_params["optimizer"], self.df_features[4]:
                                    self.registration_params['metric'], self.df_features[5]:
                                    self.registration_params["iterations"],
                                self.df_features[6]: self.registration_params['learning_rate'],
                                self.df_features[7]: self.registration_params['accuracy'],
                                self.df_features[8]: self.registration_params['convergence_val'],
-                               self.df_features[9]: rmse, self.df_features[10]: self.correspondence,
+                               self.df_features[9]: self.rmse[-1], self.df_features[10]: self.correspondence,
                                self.df_features[11]: np.nanmean(self.assignment_dists),
                                self.df_features[12]: np.nanmedian(self.assignment_dists),
                                self.df_features[13]: np.nanstd(self.assignment_dists),
-                               self.df_features[14]: np.nanmax(self.assignment_dists)},
+                               self.df_features[14]: np.nanmax(self.assignment_dists),
+                               self.df_features[15]: self.dose_loss,
+                               self.df_features[16]: total_error},
                               index=[0])
             df.to_csv("./results.csv", mode='a', index=False, header=False, encoding='utf-8')
             self.message = self.message + "\nExperiment results were saved to results.csv"
@@ -1449,6 +1491,10 @@ class App():
         self.message = f"{seeds.shape[-1]} seeds was loaded from contours"
         self.update_massage(self.message)
         self.show_seeds_uploader(num, visible=False)
+
+    def calc_dose(self):
+        self.fixed_dose = get_dose_coords(self.seeds_tips_fixed)
+        self.moving_dose = get_dose_coords(self.seeds_tips_moving)
 
 
 if __name__ == "__main__":
