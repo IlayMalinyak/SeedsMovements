@@ -337,18 +337,21 @@ class App():
             #     self.inliers_idx = [i for i in range(self.seeds_tips_fixed.shape[-1]) if i not in excludes]
             if event == "-EXCLUDE_PREV-":
                 try:
-                    self.excludes = np.array([int(i) for i in values["-EXCLUDE_IN-"].split(',')]) - 1
-                except ValueError:
-                    self.update_massage("error in outliers indexes")
-                    self.excludes = []
-                error = np.zeros(len(self.assignment_dists))
-                error += self.rmse[-1] if self.rmse[-1] is not None else 0
-                error += BASE_ERROR
-                # self.inliers_idx = [i for i in range(self.seeds_tips_fixed.shape[-1]) if i not in excludes]
-                plot_pairs_with_outliers(self.seeds_tips_fixed, self.seeds_tips_moving, self.excludes, self.case_name)
-                plot_individual_moves_outliers(self.case_name, self.assignment_dists, error, self.excludes)
-                self.exclude_win['-EXCLUDE_IMAGE-'].update("./movement_output/{}/pairs_outliers.png".format(self.case_name))
-                self.exclude_win['-EXCLUDE_MOVES-'].update("./movement_output/{}/movements_outliers.png".format(self.case_name))
+                    try:
+                        self.excludes = np.array([int(i) for i in values["-EXCLUDE_IN-"].split(',')]) - 1
+                    except ValueError:
+                        self.update_massage("error in outliers indexes")
+                        self.excludes = []
+                    error = np.zeros(len(self.assignment_dists))
+                    error += self.rmse[-1] if self.rmse[-1] is not None else 0
+                    error += BASE_ERROR
+                    # self.inliers_idx = [i for i in range(self.seeds_tips_fixed.shape[-1]) if i not in excludes]
+                    plot_pairs_with_outliers(self.seeds_tips_fixed, self.seeds_tips_moving, self.excludes, self.case_name)
+                    plot_individual_moves_outliers(self.case_name, self.assignment_dists, error, self.excludes)
+                    self.exclude_win['-EXCLUDE_IMAGE-'].update("./movement_output/{}/pairs_outliers.png".format(self.case_name))
+                    self.exclude_win['-EXCLUDE_MOVES-'].update("./movement_output/{}/movements_outliers.png".format(self.case_name))
+                except Exception as e:
+                    self.update_massage(f"error occurred:\n {e}")
 
             if event == "-EXCLUDE_APPLY-":
                 inliers_bool = np.array([True]*self.seeds_tips_fixed.shape[-1])
@@ -570,7 +573,7 @@ class App():
                 self.plot_name = "pairs"
                 self.main_window['-IMAGE-'].update("./movement_output/{}/pairs.png".format(self.case_name))
             if event == "-SHOW_PAIRS_INTERACTIVE-":
-                plot_seeds_and_contour_interactive(self.seeds_tips_fixed, self.seeds_tips_moving, self.moving_ctrs_points)
+                plot_seeds_and_contour_interactive(self.seeds_tips_fixed, self.seeds_tips_moving, self.moving_ctrs_points_down)
             if event == "-SHOW_DOSE-":
                 if self.fixed_dose is not None and self.moving_dose is not None:
                     self.main_window['-IMAGE-'].update("./movement_output/{}/pairs_dose.png".format(self.case_name))
