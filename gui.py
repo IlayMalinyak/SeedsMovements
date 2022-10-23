@@ -458,17 +458,23 @@ class App():
                     else:
                         self.tfm = sitk.ReadTransform(tfm_path)
                         self.inv_tfm, self.disp_img = get_inverse_transform(self.tfm, self.registration_type)
+                    self.update_massage(f"{tfm_path} uploaded successfully ")
                 except Exception as e:
                     print(e)
-                    arr = np.load(tfm_path, allow_pickle=True)
-                    if self.registration_type == 'saved_ICP':
-                        self.tfm = arr
-                    elif self.registration_type == "saved_CPD":
-                        tfm1 = arr['rigid']
-                        self.reg_stack.append(tfm1)
-                        self.tfm = arr['nonrigid']
-                    self.reg_stack.append(self.tfm)
-                self.update_massage(f"{tfm_path} uploaded successfully ")
+                    try:
+                        arr = np.load(tfm_path, allow_pickle=True)
+                        if self.registration_type == 'saved_ICP':
+                            self.tfm = arr
+                        elif self.registration_type == "saved_CPD":
+                            tfm1 = arr['rigid']
+                            self.reg_stack.append(tfm1)
+                            self.tfm = arr['nonrigid']
+                        self.reg_stack.append(self.tfm)
+                        self.update_massage(f"{tfm_path} uploaded successfully ")
+                    except Exception as e:
+                        self.update_massage(f"upload failed:\n{e}")
+
+
             if event == "-CONTOURS_MENU-":
                 self.ctrs_source = values[event]
                 if self.ctrs_source == "csv file":
@@ -627,12 +633,15 @@ class App():
         """
         create registration output and movement output dirs
         """
-        if self.case_name not in os.listdir('./registration_output'):
-            dir_name = f"./registration_output/{self.case_name}"
-            os.mkdir(dir_name)
-        if self.case_name not in os.listdir('./movement_output'):
-            dir_name = f"./movement_output/{self.case_name}"
-            os.mkdir(dir_name)
+        try:
+            if self.case_name not in os.listdir('./registration_output'):
+                dir_name = f"./registration_output/{self.case_name}"
+                os.mkdir(dir_name)
+            if self.case_name not in os.listdir('./movement_output'):
+                dir_name = f"./movement_output/{self.case_name}"
+                os.mkdir(dir_name)
+        except Exception as e:
+            self.update_massage(f"Error:\n {e}")
 
     def run_registration(self):
         """
@@ -1062,10 +1071,13 @@ class App():
         if 'RTSTRUCT' in self.moving_dict.keys():
             try:
                 self.moving_ctrs_points = read_structure(self.moving_dict['RTSTRUCT'])[0][1].T
-                self.moving_ctrs_points_down = down_sample_array(self.moving_ctrs_points)
-                self.moving_struct = get_contour_mask(self.moving_ctrs_points.T, self.moving_dict['meta'], self.moving_array.shape)
-                self.moving_struct_sitk = sitk.Cast(sitk.GetImageFromArray(np.transpose(self.moving_struct,(2,0,1))),sitk.sitkFloat32)
-                self.masked_moving_struct = np.ma.masked_where(self.moving_struct == 0, self.moving_struct)
+                if len(self.moving_ctrs_points) == 0:
+                    self.message = f"error loading contours on dicom:\n empty contour"
+                else:
+                    self.moving_ctrs_points_down = down_sample_array(self.moving_ctrs_points)
+                    self.moving_struct = get_contour_mask(self.moving_ctrs_points.T, self.moving_dict['meta'], self.moving_array.shape)
+                    self.moving_struct_sitk = sitk.Cast(sitk.GetImageFromArray(np.transpose(self.moving_struct,(2,0,1))),sitk.sitkFloat32)
+                    self.masked_moving_struct = np.ma.masked_where(self.moving_struct == 0, self.moving_struct)
                 # self.masked_moving_struct_orig = self.masked_moving_struct.copy()
             except Exception as e:
                 print(e)
@@ -1119,9 +1131,12 @@ class App():
         if 'RTSTRUCT' in self.fixed_dict.keys():
             try:
                 self.fixed_ctrs_points = read_structure(self.fixed_dict['RTSTRUCT'])[0][1].T
-                self.fixed_ctrs_points_down = down_sample_array(self.fixed_ctrs_points)
-                self.fixed_struct = get_contour_mask(self.fixed_ctrs_points.T, self.fixed_dict['meta'], self.fixed_array.shape)
-                self.masked_fixed_struct = np.ma.masked_where(self.fixed_struct == 0, self.fixed_struct)
+                if len(self.fixed_ctrs_points) == 0:
+                    self.message = f"error loading contours on dicom:\n empty contour"
+                else:
+                    self.fixed_ctrs_points_down = down_sample_array(self.fixed_ctrs_points)
+                    self.fixed_struct = get_contour_mask(self.fixed_ctrs_points.T, self.fixed_dict['meta'], self.fixed_array.shape)
+                    self.masked_fixed_struct = np.ma.masked_where(self.fixed_struct == 0, self.fixed_struct)
             except Exception as e:
                 print(e)
                 self.message = f"error loading contours on dicom:\n {e}"
@@ -1412,7 +1427,7 @@ class App():
             self.update_massage("Please assign pair first")
 
     def calc_dose_loss(self):
-
+        self.create_case_dir()
         self.update_massage("calculating dose change...")
         self.calc_dose()
         plot_pairs_with_dose(self.seeds_tips_fixed, self.seeds_tips_moving, self.fixed_dose, self.moving_dose,
@@ -1468,6 +1483,8 @@ class App():
                                self.df_features[15]: self.dose_loss,
                                self.df_features[16]: total_error},
                               index=[0])
+
+            df['movements_array'] = [self.assignment_dists]
             df.to_csv("./results.csv", mode='a', index=False, header=False, encoding='utf-8')
             self.message = self.message + "\nExperiment results were saved to results.csv"
             self.update_massage(self.message)
