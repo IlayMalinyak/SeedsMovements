@@ -925,7 +925,7 @@ class App():
         #TODO update arrays (numpy and sitk)
         # print('shift ', self.shift)
         R = Rotation.from_euler("xyz", self.euler_angles, degrees=True)
-        self.fixed_ctrs_points, mean = self.Manual_Transform_Countours(R,self.fixed_ctrs_points)
+        self.fixed_ctrs_points, mean = self.Manual_Transform_Countours(R,self.fixed_ctrs_points.copy())
         self.fixed_ctrs_points_down, _ = self.Manual_Transform_Countours(R, self.fixed_ctrs_points_down)
 
         mean = mean[None, :, None]

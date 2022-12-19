@@ -444,7 +444,7 @@ def pixel_to_mm_transformation_mat(meta, z_factor=-1):
     c_spacing,r_spacing,thickness = meta['pixelSpacing'][0], meta['pixelSpacing'][1],\
                                               meta['sliceThickness']
     s_spacing = abs(meta['sliceSpacing'])\
-        if ("sliceSpacing" in meta.keys() and abs(meta)['sliceSpacing'] > thickness) else abs(thickness)
+        if ("sliceSpacing" in meta.keys() and abs(meta['sliceSpacing']) < thickness) else abs(thickness)
     ipp, iop = meta['IPP'].value, meta['IOP'].value
     IPP = ipp
     IOP = iop
