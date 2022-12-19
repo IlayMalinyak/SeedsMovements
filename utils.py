@@ -443,7 +443,8 @@ def pixel_to_mm_transformation_mat(meta, z_factor=-1):
     """
     c_spacing,r_spacing,thickness = meta['pixelSpacing'][0], meta['pixelSpacing'][1],\
                                               meta['sliceThickness']
-    s_spacing = abs(meta['sliceSpacing']) if "sliceSpacing" in meta.keys() else abs(thickness)
+    s_spacing = abs(meta['sliceSpacing'])\
+        if ("sliceSpacing" in meta.keys() and abs(meta)['sliceSpacing'] > thickness) else abs(thickness)
     ipp, iop = meta['IPP'].value, meta['IOP'].value
     IPP = ipp
     IOP = iop
@@ -858,7 +859,7 @@ def get_dose_coords(seeds_tips, full=False, max_iter=40):
     :return: NX3 array of dose coordinates
     """
     tot_dose = np.zeros((0,3))
-    max_r = 2
+    max_r = 2.9
     # fig = plt.figure()
     # ax = fig.add_subplot(projection='3d')
     for i in range(seeds_tips.shape[-1]):
@@ -867,8 +868,8 @@ def get_dose_coords(seeds_tips, full=False, max_iter=40):
         # if i == 14:
         #     plt.plot(s[0], s[1], s[2])
         direction = normalize(s[2,:] - s[0,:])
-        start = s[0,:] - 1.5*direction
-        end = s[2,:] + 1.5*direction
+        start = s[0,:] - 1.7*direction
+        end = s[2,:] + 1.7*direction
         # ax.scatter(start[0], start[1], start[2], color='r')
         # ax.scatter(end[0], end[1], end[2], color='black')
         rs = np.linspace(0.2, max_r, 3) if full else [max_r]

@@ -925,12 +925,8 @@ class App():
         #TODO update arrays (numpy and sitk)
         # print('shift ', self.shift)
         R = Rotation.from_euler("xyz", self.euler_angles, degrees=True)
-        mean = np.mean(self.fixed_ctrs_points, axis=0)
-        # print("R ", R.as_matrix())
-        self.fixed_ctrs_points -= mean
-        self.fixed_ctrs_points = R.apply(self.fixed_ctrs_points)
-        self.fixed_ctrs_points += mean
-        self.fixed_ctrs_points += self.shift[None, :]
+        self.fixed_ctrs_points, mean = self.Manual_Transform_Countours(R,self.fixed_ctrs_points)
+        self.fixed_ctrs_points_down, _ = self.Manual_Transform_Countours(R, self.fixed_ctrs_points_down)
 
         mean = mean[None, :, None]
         self.seeds_tips_fixed -= mean
@@ -948,6 +944,14 @@ class App():
         #         self.moving_array = rotate(self.moving_array, -val, plane)
         # self.moving_array = shift(self.moving_array, [self.shift[1],self.shift[0],self.shift[2]])
         return R
+
+    def Manual_Transform_Countours(self, R, contour):
+        mean = np.mean(contour, axis=0)
+        contour -= mean
+        contour = R.apply(contour)
+        contour += mean
+        contour += self.shift[None, :]
+        return contour, mean
 
     def run_adaptive_icp(self):
         """
